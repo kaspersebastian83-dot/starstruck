@@ -624,8 +624,9 @@ const globe = program(`
   uniform sampler2D uTex; uniform vec3 uLight, uEye, uAtm; uniform vec4 uTint; uniform float uEm, uDim; in vec3 vN, vW; in vec2 vUV; out vec4 o;
   void main(){ vec3 n = normalize(vN); float d = dot(n, uLight), day = smoothstep(-.12, .45, d);
     vec3 tex = texture(uTex, vUV).rgb; tex = mix(tex, dot(tex, vec3(.45,.45,.25))*uTint.rgb*1.7, uTint.a);   // a star's surface takes the star's own colour
-    vec3 col = tex*mix(.09 + .91*day, 1., uEm);
-    float rim = pow(1.-max(dot(n, normalize(uEye-vW)), 0.), 3.);
+    float mu = max(dot(n, normalize(uEye-vW)), 0.);
+    vec3 col = tex*mix(.09 + .91*day, .36 + .78*sqrt(mu), uEm);      // a sun is dimmer towards its edge: you look through cooler gas there
+    float rim = pow(1.-mu, 3.);
     o = vec4((col + uAtm*rim*(.12 + .88*day))*uDim, 1.); }`);
 const ringProg = program(`
   in vec3 aPos; in vec2 aUV; uniform mat4 uPV, uModel; out vec3 vW; out vec2 vUV;
@@ -784,6 +785,7 @@ function drawSystem(PVF, eye) {
   gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PVF); gl.uniformMatrix4fv(orb.u.uModel, false, modelMatrix(G.q, G.pos, G.rad));
   gl.uniform3f(orb.u.uCol, 0.10, 0.36, 0.40); gl.bindVertexArray(orbVao.v);
   for (let i = 0; i < PLANETS.length; i++) gl.drawArrays(gl.LINE_STRIP, i * 129, 129);
+  drawSunFx(PVF, eye, G.pos, G.q, 0.06 * G.rad, [1, .62, .25], 0.8);
 }
 const grabOf = (src, c) => ({ src, relP: qrot(qconj(c.gq), add3(G.pos, c.gp, -1)), relQ: qmul(qconj(c.gq), G.q) });
 function updateGlobe(dt) {
@@ -810,6 +812,44 @@ function grabStart(src) { const c = ctl.get(src); if (!c) return; G.radT = 0;
 function grabEnd(src) { if (!G.grabs.some(g => g.src === src)) return;
   const rest = G.grabs.filter(g => g.src !== src); G.grabs = [];
   if (rest.length) { const c = ctl.get(rest[0].src); if (c) G.grabs = [grabOf(rest[0].src, c)]; } }
+
+// ───────────── A sun is not a ball: prominences arching off the surface, and the corona around it ─────────────
+const promProg = program(`
+  in vec4 aL, aS; uniform mat4 uPV, uModel; uniform float uTime, uPx, uRad, uAmt; uniform vec3 uCol; out vec3 vCol;     // aL: where the arch stands (longitude, latitude), which way it runs, how tall; aS: place along it, two jitters, half-span
+  void main(){ float t = fract(aS.x + uTime*(.025+.04*fract(aS.y*7.))), u = t*2.-1.;
+    vec3 c = vec3(cos(aL.y)*cos(aL.x), sin(aL.y), cos(aL.y)*sin(aL.x)), e1 = normalize(cross(vec3(0., 1., 0.), c)), e2 = cross(c, e1);
+    vec3 al = cos(aL.z)*e1 + sin(aL.z)*e2, ac = cross(c, al);
+    float hh = aL.w*(.78+.22*sin(uTime*.13+aL.x*9.)), arch = pow(max(1.-u*u, 0.), .6);
+    vec3 d = normalize(c + al*(aS.w*u) + ac*(aS.y-.5)*(.012+.07*aS.w*arch));
+    vec4 w = uModel*vec4(d*(1.003 + hh*arch + (aS.z-.5)*.012*(1.+2.*arch)), 1.);
+    float a = (.45+.55*(1.-arch))*smoothstep(0., .08, t)*smoothstep(1., .92, t)*(.6+.4*sin(uTime*(1.+3.*aS.z)+aS.y*40.));
+    vCol = mix(uCol, vec3(1., .86, .6), .5*(1.-arch))*a*.3*uAmt;
+    gl_Position = uPV*w; gl_PointSize = clamp(uPx*uRad*(13.+15.*aS.z)/max(gl_Position.w, .05), 1.5, 90.*uPx); }`, `
+  in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*2.2)*(1.-r2), 1.); }`);
+const PROMN = 22 * 280, promVao = (() => { let seed = 31; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const d = new Float32Array(PROMN * 8);
+  for (let l = 0; l < 22; l++) { const big = l < 6, L = [rnd() * Math.PI * 2, (rnd() - .5) * (big ? 1.6 : 1.1), rnd() * Math.PI, big ? .26 + .3 * rnd() : .06 + .16 * rnd() * rnd()], span = big ? .13 + .08 * rnd() : .05 + .1 * rnd();   // most hug the surface; six stand many Earths tall
+    for (let k = 0; k < 280; k++) d.set([...L, rnd(), rnd(), rnd(), span], (l * 280 + k) * 8); }
+  return vao(promProg, d, [['aL', 4], ['aS', 4]]); })();
+const coronaProg = program(`
+  in vec2 aQ; uniform mat4 uPV; uniform vec3 uC, uR, uU; uniform float uRad; out vec2 vQ;
+  void main(){ vQ = aQ*3.4; gl_Position = uPV*vec4(uC + (uR*vQ.x + uU*vQ.y)*uRad, 1.); }`, `
+  in vec2 vQ; uniform vec3 uCol; uniform float uTime, uAmt; out vec4 o;
+  void main(){ float r = length(vQ); if (r < .9) discard; float a = atan(vQ.y, vQ.x), x = max(r-1., 0.);
+    float st = .5+.5*sin(a*4.+1.7+.3*sin(uTime*.05))*sin(a*7.-uTime*.03)*sin(a*2.+.6);                      // the streamers reach further in some directions
+    vec3 c = uCol*1.1*exp(-x*13.) + mix(uCol, vec3(1., .95, .88), .55)*.3*exp(-x*(4.6-2.6*st));
+    o = vec4(c*uAmt*smoothstep(3.4, 2.3, r), 1.); }`);
+const coronaVao = vao(coronaProg, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), [['aQ', 2]]);
+function drawSunFx(PVF, eye, pos, q, rad, col, amt) {    // called with the depth buffer on and additive blending: what is behind the globe stays hidden
+  const n = norm(add3(eye, pos, -1)), r = norm(cross(Math.abs(n[1]) < 0.98 ? [0, 1, 0] : [1, 0, 0], n)), u = cross(n, r);
+  gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PVF); gl.uniform3fv(coronaProg.u.uC, pos); gl.uniform3fv(coronaProg.u.uR, r); gl.uniform3fv(coronaProg.u.uU, u);
+  gl.uniform1f(coronaProg.u.uRad, rad); gl.uniform3fv(coronaProg.u.uCol, col); gl.uniform1f(coronaProg.u.uTime, S.time); gl.uniform1f(coronaProg.u.uAmt, amt);
+  gl.bindVertexArray(coronaVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.useProgram(promProg.p); gl.uniformMatrix4fv(promProg.u.uPV, false, PVF); gl.uniformMatrix4fv(promProg.u.uModel, false, modelMatrix(q, pos, rad));
+  gl.uniform1f(promProg.u.uTime, S.time); gl.uniform1f(promProg.u.uPx, S.px || 1); gl.uniform1f(promProg.u.uRad, rad); gl.uniform1f(promProg.u.uAmt, amt);
+  gl.uniform3f(promProg.u.uCol, 1, .3 + .25 * col[1], .12 + .2 * col[2]);                                 // glowing hydrogen is red, whatever the star's own colour
+  gl.bindVertexArray(promVao.v); gl.drawArrays(gl.POINTS, 0, PROMN);
+}
 
 // ───────────── Visitors: a comet and the space station, in the sky and as models you can hold ─────────────
 const solid = program(`
@@ -1152,7 +1192,7 @@ const FACTS = [
   ['URANUS', 'The planet on its side', [['Diameter', '50,724 km   ·   4.0 × Earth'], ['Day', '17 h 14 min'], ['Year', '84 years'], ['Moons', 'at least 27'], ['From the Sun', '2.87 billion km']], 'Its axis is tilted 98°, so it rolls around the Sun.'],
   ['NEPTUNE', 'The far blue one', [['Diameter', '49,244 km   ·   3.9 × Earth'], ['Day', '16 h 6 min'], ['Year', '165 years'], ['Moons', 'at least 14'], ['From the Sun', '4.5 billion km']], 'The fastest winds measured anywhere: over 2,000 km/h.'],
   ['SOL SYSTEM', 'The Sun and its eight planets', [['Speed of this model', '40 days every second'], ['Starts from', 'the date you were on'], ['Orbits and positions', 'real'], ['Distances', 'squeezed together'], ['Sizes', 'enlarged, far out of scale']], 'Point at a planet or the Sun and pull the trigger to zoom in.'],
-  ['THE SUN', 'Our star', [['Diameter', '1.39 million km   ·   109 × Earth'], ['Surface', 'about 5,500 °C'], ['Age', '4.6 billion years'], ['Share of the system\'s mass', '99.8 %'], ['Light reaches Earth in', '8 min 20 s']], 'A yellow dwarf, class G2.'],
+  ['THE SUN', 'Our star   ·   a yellow dwarf, class G2', [['Diameter', '1.39 million km   ·   109 × Earth'], ['Surface', 'about 5,500 °C'], ['Age', '4.6 billion years'], ['Of the system\'s mass', '99.8 %'], ['Light reaches Earth in', '8 min 20 s']], 'The arcs are prominences: glowing gas held up by magnetism, many Earths tall.'],
 ];
 FACTS[MOON] = ['THE MOON', 'Earth\'s companion', [['Diameter', '3,474 km   ·   0.27 × Earth'], ['Distance', '384,400 km on average'], ['One orbit', '27.3 days'], ['New moon to new moon', '29.5 days'], ['Tonight', '']], 'It always shows us the same face.'];
 FACTS[COMET] = ['COMET', 'Ice and dust from the edge of the Sun\'s realm', [['Nucleus', 'a few km of ice, dust and rock'], ['Surface', 'darker than coal'], ['Coma', 'a gas cloud wider than Jupiter'],
@@ -1568,6 +1608,7 @@ function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
       gl.uniform3fv(ringProg.u.uLight, G.light); gl.uniform3fv(ringProg.u.uCentre, G.pos); gl.uniform1f(ringProg.u.uRad, G.rad); gl.uniform1i(ringProg.u.uTex, 0);
       gl.bindTexture(gl.TEXTURE_2D, ringTex); gl.bindVertexArray(ringVao.v); gl.drawElements(gl.TRIANGLES, ringCount, gl.UNSIGNED_INT, 0); }
     gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    if (G.i === SUN) drawSunFx(PVF, eye || [0, 0, 0], G.pos, G.q, G.rad, [1, .62, .25], 1);
   }
 }
 function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
@@ -1684,13 +1725,14 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
       gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PVF); gl.uniform3fv(globe.u.uEye, eye || [0, 0, 0]); gl.uniform1i(globe.u.uTex, 0);
       gl.uniform3f(globe.u.uLight, 0, 1, 0); gl.uniform1f(globe.u.uEm, 1); gl.bindTexture(gl.TEXTURE_2D, starTex); gl.bindVertexArray(sphereVao.v);
-      const sun = (pos, r, bv, spin) => { const c = starColour(bv); gl.uniformMatrix4fv(globe.u.uModel, false, modelMatrix(qaxis([0, 1, 0], S.time * spin), pos, r));
+      const fx = [], sun = (pos, r, bv, spin) => { const c = starColour(bv), q = qaxis([0, 1, 0], S.time * spin); fx.push([pos, q, r, c]); gl.uniformMatrix4fv(globe.u.uModel, false, modelMatrix(q, pos, r));
         gl.uniform3fv(globe.u.uAtm, c.map(x => x * 0.9)); gl.uniform4f(globe.u.uTint, c[0], c[1], c[2], 0.85); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); };
       if (!dbl) sun(mid, starSize(i), PICK[i][5], 0.05);
       else { const r1 = Math.min(0.7, starSize(i) * 0.8), r2 = r1 * dbl[1], sep = (r1 + r2) * 1.3, a = S.time * 0.16, rt = norm(cross(dir, [0, 1, 0])), dp = norm(add3(dir.map(x => x * 0.4), [0, 0.3, 0]));
         const o = add3(rt.map(x => x * Math.cos(a)), dp, Math.sin(a));                    // the two circle their common centre (not to scale)
         sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08); }
-      gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); } }
+      gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+      for (const [pos, q, r, c] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, 0.9); } }
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
   drawRoom(PVF, eye);
   if (tagCount) { gl.enable(gl.DEPTH_TEST); gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, 0); gl.uniform3f(tagProg.u.uCol, .72, .95, 1);
