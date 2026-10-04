@@ -285,6 +285,35 @@ const streak = program(`
     gl_Position = uPV*vec4(uSky*(rel/dist)*modelR(dist)-uEye, 1.);
   }`, `
   in vec3 vCol; out vec4 o; void main(){ o = vec4(vCol, 1.); }`);
+// Between the galaxies: a field of far-off galaxies to travel through. Decoration, not data: the real space out there is far emptier.
+const far = program(`
+  in vec3 aP; in vec4 aS; in float aT;             // aP: place in a cube that repeats for ever; aS: size, tilt, flatness, kind+tint; aT: 1 at the tail end of a streak
+  uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uQ, uTrail, uEye; uniform float uPx, uAmt, uLine;
+  out vec4 vS; out vec3 vCol;
+  void main(){
+    vec3 r = fract(aP-uQ+.5)-.5; float d = length(r); r += uTrail*aT;
+    float I = uAmt*smoothstep(.5, .34, d)*smoothstep(.012, .05, d)*(.35+.65*fract(aS.w*7.3));
+    float tint = fract(aS.w*3.1);
+    vCol = mix(vec3(1.,.82,.62), vec3(.62,.78,1.), tint)*I*mix(1., .5*(1.-aT), uLine); vS = aS;
+    gl_Position = I < .004 ? vec4(2., 2., 2., 1.) : uPV*vec4(uSky*r*170.-uEye, 1.);
+    gl_PointSize = clamp(uPx*aS.x*4.6/d, 3., uPx*130.);
+  }`, `
+  in vec4 vS; in vec3 vCol; uniform float uLine; out vec4 o;
+  void main(){
+    if (uLine > .5) { o = vec4(vCol, 1.); return; }
+    vec2 p = gl_PointCoord*2.-1.; float c = cos(vS.y), s = sin(vS.y); p = vec2(c*p.x+s*p.y, (c*p.y-s*p.x)/vS.z);
+    float r2 = dot(p,p); if (r2 > 1.) discard;
+    float a = 1.1*exp(-r2*6.)*(1.-r2) + 1.2*exp(-r2*50.);
+    if (vS.w > 1.) a *= 1.+.75*cos(2.*atan(p.y, p.x)+7.*sqrt(r2)+vS.w*20.)*smoothstep(.02, .2, r2);      // some are spirals
+    o = vec4(vCol*a, 1.);
+  }`);
+const FARN = 9000, FARL = 60000 / 3.26156;   // FARL: the cube's nominal size in parsecs (it stretches the further out you are)
+let farPts, farLines;
+{ let seed = 99; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const a = new Float32Array(FARN * 8), b = new Float32Array(FARN * 16);
+  for (let i = 0; i < FARN; i++) { const v = [rnd(), rnd(), rnd(), 0.25 + 0.75 * rnd() * rnd(), rnd() * Math.PI, 0.3 + 0.7 * rnd(), rnd() + (rnd() < 0.55 ? 1 : 0)];
+    a.set(v, i * 8); b.set(v, i * 16); b.set(v, i * 16 + 8); b[i * 16 + 15] = 1; }
+  const lay = [['aP', 3], ['aS', 4], ['aT', 1]]; farPts = vao(far, a, lay); farLines = vao(far, b, lay); }
 let streakVao, streakCount = 0;
 const DUST = 300000, MIRROR_DUST = 100000;   // generated specks, placed where the Milky Way is bright
 let starCount = 0, starVao;
@@ -574,7 +603,7 @@ function planetDirs(ms) {        // direction of each planet as seen from Earth,
     return norm([x, y * ce - z * se, y * se + z * ce]); });
 }
 window.planetDirs = planetDirs;
-const planetPts = new Float32Array((PLANETS.length + 2) * 5), planetPtVao = vao(stars, planetPts, [['aDir', 3], ['aMB', 2]], null, gl.DYNAMIC_DRAW);
+const planetPts = new Float32Array((PLANETS.length + 3) * 5), planetPtVao = vao(stars, planetPts, [['aDir', 3], ['aMB', 2]], null, gl.DYNAMIC_DRAW);
 const planetLab = new Float32Array(PLANETS.length * 36), planetLabVao = vao(labels, planetLab, [['aDir', 3], ['aCorner', 2], ['aUV', 2], ['aMeta', 2]], quadIndex(PLANETS.length), gl.DYNAMIC_DRAW);
 
 // quaternions [x, y, z, w]
@@ -648,10 +677,12 @@ const MOONS = { 2: [['MOON', 3.2, 0.27, 24, null]], 3: [['PHOBOS', 1.5, 0.035, 5
   6: [['TITANIA', 2.2, 0.05, 22, [.7, .68, .66]], ['OBERON', 2.7, 0.048, 34, [.62, .58, .56]]], 7: [['TRITON', 2.3, 0.06, -18, [.9, .8, .78]]] };
 const moonsOf = g => (MOONS[g.i] || []).map(([name, dist, size, per, tint], n) => { const a = S.time * Math.PI * 2 / per + n * 2.1;
   return { name, tint, r: size * g.rad, p: add3(g.pos, qrot(g.q, [Math.cos(a) * dist, 0, -Math.sin(a) * dist]), g.rad) }; });
-const BODY = i => i === SUN ? SUNBODY : i === MOON ? MOONBODY : PLANETS[i];
+const COMET = MOON + 1, ISS = MOON + 2;     // two visitors: neither is a globe, each has its own model
+const COMETBODY = { name: 'Comet', tilt: 18, spin: 0.1, atm: [0, 0, 0] }, ISSBODY = { name: 'ISS', tilt: 90, spin: 0.09, atm: [0, 0, 0] };
+const BODY = i => i === SUN ? SUNBODY : i === MOON ? MOONBODY : i === COMET ? COMETBODY : i === ISS ? ISSBODY : PLANETS[i];
 function sunDir() { const T = centuries(S.sim), E = helio(PLANETS[2].el, T), ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D);   // where the real Sun is in the sky right now
   return applySky(S.sky, norm([-E[0], -E[1] * ce + E[2] * se, -E[1] * se - E[2] * ce])); }
-const skyDirOf = i => i === 2 ? [0, -1, 0] : i === SUN ? sunDir() : i === MOON ? applySky(S.sky, S.moonDir) : applySky(S.sky, S.pdirs[i]);
+const skyDirOf = i => i === COMET ? applySky(S.sky, S.cometDir) : i === ISS ? (S.issDir || horizDir(250, 35)) : i === 2 ? [0, -1, 0] : i === SUN ? sunDir() : i === MOON ? applySky(S.sky, S.moonDir) : applySky(S.sky, S.pdirs[i]);
 let OUT = null;                   // a planet on its way back out while the next one arrives
 const leaveAnim = o => o.i === SYS ? { out: true, t: 0, dur: 1, from: o.pos, to: [0, 1.1 + S.floorY, -0.9], r0: o.rad, r1: 0.03 }
   : { out: true, t: 0, dur: 1.3, from: o.pos, to: add3(o.pos, skyDirOf(o.i), 40), r0: o.rad, r1: 0.12 };
@@ -667,7 +698,9 @@ function summon(i, target, fromDir, rad, eye, start) {      // start: begin from
   const p = BODY(i), from = start ? start.from : add3(target, fromDir, 40), r0 = start ? start.r0 : 0.12;
   Object.assign(G, { i, tex: null, grabs: [], radT: 0, sysBack: null, q: qaxis([0, 0, 1], -p.tilt * D), spin: p.spin, rad: r0, pos: from,
     anim: { out: false, t: 0, dur: start ? 1.4 : 1.8, from, to: target, r0, r1: rad } });
-  loadTex('data:image/webp;base64,' + (i === SUN ? STEX : i === MOON ? MTEX : PTEX[i]), t => { if (G.i === i) G.tex = t; else gl.deleteTexture(t); });
+  if (i === COMET || i === ISS) { G.tex = gl.createTexture(); G.q = qmul(qaxis([1, 0, 0], i === ISS ? 0.55 : 0.2), G.q);         // no map to load: the model is built in
+    if (i === COMET) G.light = norm([rt[0] * 0.85 + te[0] * 0.4, 0.3, rt[2] * 0.85 + te[2] * 0.4]); }                        // the Sun stands to one side, so the tail streams across in front of you
+  else loadTex('data:image/webp;base64,' + (i === SUN ? STEX : i === MOON ? MTEX : PTEX[i]), t => { if (G.i === i) G.tex = t; else gl.deleteTexture(t); });
   whoosh(1.3);
 }
 function dismiss() {
@@ -689,6 +722,8 @@ function planetAt(d, off) {      // which planet does this ray point at? Earth i
   for (let i = 0; i < PLANETS.length && S.away < 0.02; i++) { if (i === 2 || i === G.i) continue; const q = S.pdirs[i], dp = dot(norm([q[0] * R - o[0], q[1] * R - o[1], q[2] * R - o[2]]), e);
     if (dp > bd && !(S.ground > 0.5 && applySky(S.sky, S.pdirs[i])[1] < 0.03)) { bd = dp; best = i; } }
   if (best < 0 && moonShown() && dot(S.moonDir, e) > Math.cos(3.5 * D)) return MOON;
+  if (best < 0 && issShown()) { const q = unSky(S.sky, S.issDir); if (dot(norm([q[0] * R - o[0], q[1] * R - o[1], q[2] * R - o[2]]), e) > Math.cos(4 * D)) return ISS; }
+  if (best < 0 && cometShown() && dot(S.cometDir, e) > Math.cos(4 * D)) return COMET;
   return best < 0 && d[1] < -0.55 && G.i !== 2 && S.pick < 0 ? 2 : best;      // (pointing down at a star means the star, not Earth)
 }
 // the whole solar system as a model: real positions and real orbit shapes, with distances squeezed so the inner planets stay visible
@@ -766,7 +801,7 @@ function updateGlobe(dt) {
     if (c2) G.rad = clamp(g2.rad0 * dist3(c.gp, c2.gp) / g2.d0);                 // two hands: pull apart to grow it
     else if (Math.abs(c.sy) > 0.15) G.rad = clamp(G.rad * Math.exp(-c.sy * dt * 1.4)); }
   if (G.i === SYS) G.simT += dt * 40 * 86400000;                                   // the model runs at forty days a second, held or not
-  if (!G.anim && !G.grabs.length) { G.q = qmul(G.q, qaxis([0, 1, 0], dt * G.spin));   // left alone, it turns on its own axis
+  if (!G.anim && !G.grabs.length) { G.q = G.i >= COMET ? qmul(qaxis([0, 1, 0], dt * G.spin), G.q) : qmul(G.q, qaxis([0, 1, 0], dt * G.spin));   // left alone, it turns on its own axis
     if (G.radT) { G.rad += (G.radT - G.rad) * Math.min(1, dt * 5); if (Math.abs(G.rad - G.radT) < 0.002) G.radT = 0; } }
 }
 function grabStart(src) { const c = ctl.get(src); if (!c) return; G.radT = 0;
@@ -775,6 +810,130 @@ function grabStart(src) { const c = ctl.get(src); if (!c) return; G.radT = 0;
 function grabEnd(src) { if (!G.grabs.some(g => g.src === src)) return;
   const rest = G.grabs.filter(g => g.src !== src); G.grabs = [];
   if (rest.length) { const c = ctl.get(rest[0].src); if (c) G.grabs = [grabOf(rest[0].src, c)]; } }
+
+// ───────────── Visitors: a comet and the space station, in the sky and as models you can hold ─────────────
+const solid = program(`
+  in vec3 aPos, aNor, aCol; uniform mat4 uPV, uModel; out vec3 vN, vW, vC, vL;
+  void main(){ vec4 w = uModel*vec4(aPos, 1.); vW = w.xyz; vN = mat3(uModel)*aNor; vC = aCol; vL = aPos; gl_Position = uPV*w; }`, `
+  uniform vec3 uLight, uEye; uniform float uRock; in vec3 vN, vW, vC, vL; out vec4 o;
+  float h3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7)))*43758.5453); }
+  float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
+    return mix(mix(mix(h3(i), h3(i+vec3(1,0,0)), f.x), mix(h3(i+vec3(0,1,0)), h3(i+vec3(1,1,0)), f.x), f.y),
+               mix(mix(h3(i+vec3(0,0,1)), h3(i+vec3(1,0,1)), f.x), mix(h3(i+vec3(0,1,1)), h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
+  void main(){ vec3 n = normalize(vN), e = normalize(uEye-vW); if (dot(n, e) < 0.) n = -n;
+    vec3 c = vC; float shine = 0.;
+    if (uRock > .5) { float m = .5*vn(vL*9.)+.3*vn(vL*23.)+.2*vn(vL*61.); c *= .55+.9*m; c = mix(c, vec3(.75,.8,.85), smoothstep(.72, .8, vn(vL*5.+7.))*.5); }   // dusty rock with a few icy patches
+    else if (c.b > c.r*2.) { vec2 g = vL.xy*54.5; vec2 f = min(fract(g), 1.-fract(g)), w = fwidth(g)*1.2+.03;                        // solar cells: a fine grid, and a glint
+      c *= .55+.45*smoothstep(0., w.x, f.x)*smoothstep(0., w.y, f.y); shine = 1.1; } else shine = .25;
+    float d = max(dot(n, uLight), 0.);
+    float sp = pow(max(dot(n, normalize(uLight+e)), 0.), 48.)*shine;
+    o = vec4(c*(.05 + .95*d) + c*vec3(.05,.08,.13)*max(-n.y, 0.)*(1.-uRock) + vec3(sp), 1.); }`);
+function Mesh() { const v = [], ix = [], sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], id = p => p;
+  const quad = (a, b, c, d, col) => { const n = norm(cross(sub(b, a), sub(d, a))), s0 = v.length / 9; for (const q of [a, b, c, d]) v.push(...q, ...n, ...col); ix.push(s0, s0 + 1, s0 + 2, s0, s0 + 2, s0 + 3); };
+  return { v, ix,
+    box(c, sz, col, T = id) { const k = (x, y, z) => T([c[0] + x * sz[0] / 2, c[1] + y * sz[1] / 2, c[2] + z * sz[2] / 2]);
+      for (const [a, b, d, e] of [[[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1]], [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]],
+        [[-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1]], [[-1, -1, -1], [-1, 1, -1], [-1, 1, 1], [-1, -1, 1]], [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1]]]) quad(k(...a), k(...b), k(...d), k(...e), col); },
+    cyl(a, b, r0, r1, col, seg = 20) { const ax = norm(sub(b, a)), u = norm(cross(ax, Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), w = cross(ax, u), s0 = v.length / 9;   // a tube, or a cone when the ends differ; closed with flat caps
+      for (let i = 0; i <= seg; i++) { const t = i / seg * Math.PI * 2, n = add3(u.map(x => x * Math.cos(t)), w, Math.sin(t)); v.push(...add3(a, n, r0), ...n, ...col, ...add3(b, n, r1), ...n, ...col); }
+      for (let i = 0; i < seg; i++) ix.push(s0 + i * 2, s0 + i * 2 + 1, s0 + i * 2 + 2, s0 + i * 2 + 2, s0 + i * 2 + 1, s0 + i * 2 + 3);
+      for (const [c, r] of [[a, r0], [b, r1]]) { const c0 = v.length / 9; v.push(...c, ...ax, ...col);
+        for (let i = 0; i <= seg; i++) { const t = i / seg * Math.PI * 2; v.push(...add3(c, add3(u.map(x => x * Math.cos(t)), w, Math.sin(t)), r), ...ax, ...col); }
+        for (let i = 0; i < seg; i++) ix.push(c0, c0 + 1 + i, c0 + 2 + i); } } }; }
+const meshVao = (M, k, off) => { const d = new Float32Array(M.v); for (let i = 0; i < d.length; i += 9) { d[i] = (d[i] + off[0]) * k; d[i + 1] = (d[i + 1] + off[1]) * k; d[i + 2] = (d[i + 2] + off[2]) * k; }
+  const o = vao(solid, d, [['aPos', 3], ['aNor', 3], ['aCol', 3]], new Uint32Array(M.ix)); o.n = M.ix.length; return o; };
+// the station, built from boxes and tubes in metres (x: forward, y: along the truss, z: up), then shrunk so the truss spans the model. Simplified, not a survey.
+const issVao = (() => { const M = Mesh(), W = [.80, .80, .78], GR = [.5, .5, .53], DK = [.3, .3, .33], RU = [.62, .58, .46], BL = [.07, .11, .34], RAD = [.93, .94, .96], Z = -4.6;
+  M.box([0, 0, 0], [2.6, 94, 2.6], GR); for (let y = -44; y <= 44; y += 11) M.box([0, y, 0], [3.3, 1.3, 3.3], DK);
+  for (const [y, ang] of [[-47, .5], [-33, -.35], [33, .45], [47, -.3]]) { const c = Math.cos(ang), n = Math.sin(ang), T = q => [q[0] * c + q[2] * n, q[1] + y, -q[0] * n + q[2] * c];     // eight solar wings, each pair turned its own way
+    for (const sx of [-1, 1]) { M.box([sx * 20.5, 0, 0], [35, .45, .45], GR, T); for (const dy of [-3.1, 3.1]) M.box([sx * 20.5, dy, 0], [34, 5.2, .1], BL, T); }
+    M.cyl([0, y - 1.6, 0], [0, y + 1.6, 0], 1.7, 1.7, DK); }
+  for (const sy of [-1, 1]) { for (const k of [0, 1, 2]) M.box([-13.5, sy * (9 + k * 3.6), -.3], [21, 3.3, .1], RAD); M.box([-2.4, sy * 12.6, -.3], [1.4, 11, 1], GR);            // radiators
+    M.box([-8.5, sy * 40, 0], [12, 3.1, .1], RAD, q => [q[0], q[1], q[2] + (q[0] + 2) * .3]); }
+  const mod = (a, b, r, col) => { const ax = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]), a1 = add3(a, ax, .7), b1 = add3(b, ax, -.7); M.cyl(a, a1, r * .62, r, col); M.cyl(a1, b1, r, r, col); M.cyl(b1, b, r, r * .62, col); };
+  mod([-3, 0, Z], [2.5, 0, Z], 2.3, W); mod([2.5, 0, Z], [11, 0, Z], 2.15, W); mod([11, 0, Z], [18, 0, Z], 2.2, W); M.cyl([18, 0, Z], [20, 0, Z], 1.3, .9, DK);           // Unity, Destiny, Harmony
+  M.box([5, 0, -2.3], [4.5, 3.2, 2.4], GR);
+  mod([14.5, 2.2, Z], [14.5, 9.2, Z], 2.2, W); mod([14.5, -2.2, Z], [14.5, -13.4, Z], 2.2, W); mod([14.5, -8.5, Z + 2], [14.5, -8.5, Z + 6.2], 2.1, W);                  // Columbus, Kibo and its attic
+  M.box([14.5, -16.6, Z], [5, 6, .5], GR); M.box([13.3, -16, Z + .8], [1.6, 1.8, 1.2], W); M.box([15.6, -17.6, Z + .8], [1.6, 1.8, 1.2], [.75, .62, .3]);
+  mod([-.5, 2.3, Z], [-.5, 8, Z], 2, W); mod([-.5, -2.3, Z], [-.5, -9.5, Z], 2.2, W); M.cyl([-.5, -7.6, Z - 2.1], [-.5, -7.6, Z - 3.6], 1.5, .9, DK); mod([1.8, -7.4, Z], [8.2, -7.4, Z], 2.2, W);   // Quest, Tranquility, the Cupola, Leonardo
+  M.cyl([-5, 0, Z], [-3, 0, Z], .95, 1.3, DK); mod([-17.5, 0, Z], [-5, 0, Z], 2.05, RU); mod([-31, 0, Z], [-17.5, 0, Z], 2.05, RU);                                     // Zarya, Zvezda
+  for (const sy of [-1, 1]) { M.box([-26, sy * 9.5, Z], [3.4, 15, .1], BL); M.box([-26, sy * 9.5, Z], [.35, 15, .35], GR); M.box([-11, sy * 4.6, Z], [3, 5, .1], BL);
+    M.box([-19, sy * 7.5, Z - 9], [3, 11, .1], BL); }
+  mod([-19, 0, Z - 2], [-19, 0, Z - 14], 2.05, RU); mod([-9, 0, Z - 2], [-9, 0, Z - 8], 1.25, RU); mod([-19, 0, Z + 2], [-19, 0, Z + 6], 1.25, RU);                     // Nauka, Rassvet, Poisk
+  const craft = (a, ax, side) => { mod(a, add3(a, ax, 7), 1.15, [.55, .56, .5]); const m = add3(a, ax, 2.2); M.box(m, side[0] ? [10.5, 1.5, .08] : [1.5, 10.5, .08], BL); };   // a visiting Soyuz or Progress
+  craft([-38, 0, Z], [1, 0, 0], [0, 1]); craft([-9, 0, Z - 15], [0, 0, 1], [0, 1]);
+  M.cyl([20, 0, Z], [24.2, 0, Z], 1.85, 1.85, [.9, .9, .9]); M.cyl([24.2, 0, Z], [27.2, 0, Z], 1.85, .8, [.9, .9, .9]);                                              // a capsule docked at the front
+  let q = [7, 1.2, Z + 2.1]; for (const nx of [[9, 6, Z + 7], [13, 5, Z + 11.5], [15, 1, Z + 12]]) { M.cyl(q, nx, .22, .22, W, 8); q = nx; }                               // the robot arm
+  return meshVao(M, 1 / 54.5, [5, 0, 3]); })();
+// the comet's nucleus: two lobes joined by a neck, like 67P, roughened with noise
+const cometVao = (() => { const NU = 96, NV = 48, P = [], M = { v: [], ix: [] };
+  const hsh = (x, y, z) => { const n = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return n - Math.floor(n); };
+  const vnz = (x, y, z) => { const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), f = t => t * t * (3 - 2 * t), a = f(x - i), b = f(y - j), c = f(z - k), L = (p, q, t) => p + (q - p) * t;
+    return L(L(L(hsh(i, j, k), hsh(i + 1, j, k), a), L(hsh(i, j + 1, k), hsh(i + 1, j + 1, k), a), b), L(L(hsh(i, j, k + 1), hsh(i + 1, j, k + 1), a), L(hsh(i, j + 1, k + 1), hsh(i + 1, j + 1, k + 1), a), b), c); };
+  const far = (d, c, r) => { const q = d.map((x, i) => x / r[i]), o = c.map((x, i) => x / r[i]), A = dot(q, q), B = dot(q, o), C = dot(o, o) - 1, disc = B * B - A * C; return disc < 0 ? 0 : (B + Math.sqrt(disc)) / A; };   // where a ray from the middle leaves an ellipsoid
+  for (let j = 0; j <= NV; j++) for (let i = 0; i <= NU; i++) { const ph = i / NU * Math.PI * 2, th = j / NV * Math.PI, d = [Math.cos(ph) * Math.sin(th), Math.cos(th), Math.sin(ph) * Math.sin(th)];
+    let r = Math.max(far(d, [-.26, 0, 0], [.64, .5, .52]), far(d, [.46, .1, 0], [.42, .36, .35]));
+    r *= 1 + .16 * (vnz(d[0] * 2.3 + 5, d[1] * 2.3, d[2] * 2.3) - .5) + .09 * (vnz(d[0] * 6 + 1, d[1] * 6, d[2] * 6) - .5) + .04 * (vnz(d[0] * 15, d[1] * 15 + 3, d[2] * 15) - .5);
+    P.push(d.map(x => x * r)); }
+  const N = P.map(() => [0, 0, 0]), id = (i, j) => j * (NU + 1) + i % NU;      // (the seam shares its points, so the shading has no crease)
+  for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) { const a = id(i, j), b = id(i, j + 1), c = id(i + 1, j), e = id(i + 1, j + 1);
+    for (const [x, y, z] of [[a, b, c], [c, b, e]]) { const n = cross(add3(P[y], P[x], -1), add3(P[z], P[x], -1)); for (const t of [x, y, z]) N[t] = add3(N[t], n); M.ix.push(x, y, z); } }
+  P.forEach((q, n) => { const m = norm(N[n]), g = .52 + .16 * vnz(q[0] * 4, q[1] * 4, q[2] * 4); M.v.push(...q, ...(dot(m, q) < 0 ? m.map(x => -x) : m), g, g * .92, g * .84); });
+  return meshVao(M, 1.08, [-.06, 0, 0]); })();
+const tailProg = program(`
+  in vec4 aS; uniform mat4 uPV; uniform vec3 uC, uT, uB; uniform float uRad, uTime, uPx, uFade; out vec3 vCol;
+  void main(){ float kind = floor(aS.w*3.), r4 = fract(aS.w*3.), ang = aS.y*6.2831853;
+    float t = fract(aS.x + uTime*(kind == 1. ? .15 : kind == 0. ? .06 : .10)*(.6+.8*r4));
+    vec3 N = cross(uT, uB), p, col; vec2 dsc = sqrt(aS.z)*vec2(cos(ang), sin(ang)); float a, sz;
+    if (kind == 2.) { float z = aS.z*2.-1., q = sqrt(1.-z*z); p = vec3(q*cos(ang), z, q*sin(ang))*(.7+1.3*t); col = vec3(.45,.95,.8); a = .010*(1.-t)*(1.-t); sz = 330.; }      // the coma: gas boiling off all round
+    else if (kind == 1.) { p = uT*(.6+7.*t) + (uB*dsc.x + N*dsc.y)*(.16+.3*t); col = vec3(.3,.55,1.); a = .030*(1.-t)*smoothstep(0., .06, t); sz = 80.+90.*t; }                // the gas tail: straight and blue
+    else { p = uT*(.5+5.2*t) + uB*(1.6*t*t) + (uB*dsc.x + N*dsc.y)*(.3+1.5*t); col = vec3(1.,.88,.7); a = .020*(1.-t)*smoothstep(0., .05, t); sz = 130.+260.*t; }               // the dust tail: wide, pale and curved
+    vec4 w = uPV*vec4(uC + p*uRad, 1.); gl_Position = w; gl_PointSize = clamp(uPx*uRad*sz/max(w.w, .05), 1.5, 220.*uPx); vCol = col*a*uFade; }`, `
+  in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*2.5)*(1.-r2), 1.); }`);
+const TAILN = 6000, tailVao = (() => { let seed = 5; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const d = new Float32Array(TAILN * 4); for (let i = 0; i < d.length; i++) d[i] = rnd(); return vao(tailProg, d, [['aS', 4]]); })();
+function drawVisitor(PVF, eye) {  // the comet or the station in the room
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
+  const m = G.i === ISS ? issVao : cometVao;
+  gl.useProgram(solid.p); gl.uniformMatrix4fv(solid.u.uPV, false, PVF); gl.uniformMatrix4fv(solid.u.uModel, false, modelMatrix(G.q, G.pos, G.rad));
+  gl.uniform3fv(solid.u.uLight, G.light); gl.uniform3fv(solid.u.uEye, eye); gl.uniform1f(solid.u.uRock, G.i === COMET ? 1 : 0);
+  gl.bindVertexArray(m.v); gl.drawElements(gl.TRIANGLES, m.n, gl.UNSIGNED_INT, 0);
+  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  if (G.i === COMET) { const T = G.light.map(x => -x), B = norm(cross(T, Math.abs(T[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0]));       // however you turn the nucleus, the tail keeps pointing away from the Sun
+    gl.useProgram(tailProg.p); gl.uniformMatrix4fv(tailProg.u.uPV, false, PVF); gl.uniform3fv(tailProg.u.uC, G.pos); gl.uniform3fv(tailProg.u.uT, T); gl.uniform3fv(tailProg.u.uB, B);
+    gl.uniform1f(tailProg.u.uRad, G.rad); gl.uniform1f(tailProg.u.uTime, S.time); gl.uniform1f(tailProg.u.uPx, S.px || 1); gl.uniform1f(tailProg.u.uFade, Math.min(1, G.rad / 0.1));
+    gl.bindVertexArray(tailVao.v); gl.drawArrays(gl.POINTS, 0, TAILN); }
+}
+// in the sky: the comet crawls along its own path among the stars; the station rises in the west and crosses in a few minutes
+const cometSky = program(`
+  in vec2 aQ; uniform mat4 uPV; uniform vec3 uC, uU, uV; out vec2 vQ; out vec3 vD;
+  void main(){ vQ = aQ; vD = uC + uU*aQ.x + uV*aQ.y; gl_Position = uPV*vec4(vD*50., 1.); }`, `
+  in vec2 vQ; in vec3 vD; uniform float uGround, uAmt; out vec4 o;` + HORIZON + `
+  void main(){ vec3 n = normalize(vD); float vis = mix(1., smoothstep(0., .03, n.y-hor(n)), uGround)*uAmt;
+    vec2 p = vQ; float r2 = dot(p, p), x = max(p.x, 0.), edge = smoothstep(.36, .2, p.x)*smoothstep(.15, .09, abs(p.y))*smoothstep(-.07, -.035, p.x);
+    float head = 1.5*exp(-r2*26000.) + .5*exp(-r2*2600.) + .16*exp(-r2*700.);
+    float wd = .006+.17*x, yc = p.y-.8*x*x, dust = smoothstep(-.004, .012, p.x)*exp(-x*8.5)*exp(-yc*yc/(wd*wd))*.42;
+    float wi = .0035+.035*x, yi = p.y+.13*x, ion = smoothstep(-.003, .008, p.x)*exp(-x*6.)*exp(-yi*yi/(wi*wi))*.3;
+    o = vec4((vec3(.8,1.,.9)*head + vec3(1.,.92,.78)*dust + vec3(.4,.62,1.)*ion)*vis*edge, 1.); }`);
+const cometSkyVao = vao(cometSky, new Float32Array([-.07, -.15, .37, -.15, -.07, .15, .37, .15]), [['aQ', 2]]);
+const VIS = { A: null, B: null, pass: null, next: 45, ann: 0, look: '' };
+const cometShown = () => S.away < 0.02 && S.cometDir && G.i !== COMET && !(OUT && OUT.i === COMET) && !(S.ground > 0.5 && applySky(S.sky, S.cometDir)[1] < 0.03);
+const issShown = () => S.away < 0.02 && !!S.issDir && G.i !== ISS && !(OUT && OUT.i === ISS);
+function updateVisitors(dt) {
+  if (!VIS.A) { VIS.A = unSky(S.sky, horizDir(118, 30)); const P = unSky(S.sky, horizDir(305, 48)); VIS.B = norm(add3(P, VIS.A, -dot(P, VIS.A))); VIS.t0 = S.time; }   // it starts in the south-east and climbs over the top
+  const th = (S.time - VIS.t0) * 0.1 * D, C = norm(add3(VIS.A.map(x => x * Math.cos(th)), VIS.B, Math.sin(th))), sn = unSky(S.sky, sunDir());
+  S.cometDir = C; S.cometTail = norm(add3(C.map(x => x * dot(C, sn)), sn, -1));                        // one turn of the sky in an hour (far faster than any real comet)
+  if (!VIS.pass && S.intro > VIS.next && S.away < 0.02) { const H = 40 + 100 * Math.random(), b = (Math.random() * 2 - 1) * 10 * D, side = horizDir(H + 90, 0);    // the station always travels eastwards
+    VIS.pass = { u: [side[0] * Math.sin(b), Math.cos(b), side[2] * Math.sin(b)], w: horizDir(H, 0), ph: -22 * D, told: false }; }
+  S.issDir = null;
+  if (VIS.pass) { const q = VIS.pass, R = 6371, Rs = R + 420; q.ph += dt * 0.16 * D;                     // about two and a half times its real pace
+    const pos = [0, 1, 2].map(i => Rs * (q.u[i] * Math.cos(q.ph) + q.w[i] * Math.sin(q.ph)) - (i === 1 ? R : 0)), dist = Math.hypot(pos[0], pos[1], pos[2]);
+    if (pos[1] > 0) { S.issDir = pos.map(x => x / dist); S.issMag = -3.1 + 5 * Math.log10(dist / 420) + 3 * Math.max(0, 1 - pos[1] / dist / 0.12);
+      if (!q.told && pos[1] / dist > 0.14 && S.ground > 0.5 && !EV.cur) { q.told = true; VIS.ann = S.time + 9; VIS.look = lookWord(S.issDir); signal(); } }
+    if (q.ph > 22 * D || S.away > 0.02) { VIS.pass = null; VIS.next = S.intro + 140 + Math.random() * 160; } }
+  const d = S.issDir && issShown() ? unSky(S.sky, S.issDir) : null;
+  planetPts.set(d ? [d[0] * 10, d[1] * 10, d[2] * 10, S.issMag, 0.55] : [0, 0, 1, 40, 0], (PLANETS.length + 2) * 5);
+}
 
 // ───────────── The observation deck: a glass platform, a railing and a control console ─────────────
 const deck = program(`
@@ -864,29 +1023,44 @@ function drawPanel() {
     x.beginPath(); x.roundRect(644, 26, 340, 46, 12); x.fill(); x.stroke();
     x.textAlign = 'center'; x.fillStyle = ev ? A : T + '.95)'; x.font = '500 16px ' + FONT; sp('0.12em');
     x.fillText(ev ? '●  ' + EVENT_NAMES[ev.type] + '   ·   ' + ev.look.toUpperCase() : 'SCAN THE SKY', 814, 50); x.textAlign = 'left'; }
-  x.textAlign = 'left'; x.fillStyle = T + '.5)'; x.font = '500 15px ' + FONT; x.fillText('CALL THE SUN, A PLANET OR THE WHOLE SYSTEM', 40, 110); x.fillText('CONTROLS', 40, 338);
-  { const cx = 58, cy = 196, on = G.i === SUN, g = x.createRadialGradient(cx, cy, 6, cx, cy, 46);                       // the Sun
+  x.textAlign = 'left'; x.fillStyle = T + '.5)'; x.font = '500 15px ' + FONT; x.fillText('CALL THE SUN, A PLANET, A VISITOR OR THE WHOLE SYSTEM', 40, 110); x.fillText('CONTROLS', 40, 338);
+  { const cx = 52, cy = 196, on = G.i === SUN, g = x.createRadialGradient(cx, cy, 6, cx, cy, 40);                       // the Sun
     g.addColorStop(0, '#fff3c4'); g.addColorStop(0.55, '#ffb43c'); g.addColorStop(0.8, 'rgba(255,120,20,.55)'); g.addColorStop(1, 'rgba(255,120,20,0)');
-    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, 46, 0, Math.PI * 2); x.fill();
-    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, 45, 0, Math.PI * 2); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 15px ' + FONT; sp('0.14em'); x.fillText('SUN', cx, 274); }
-  PLANETS.forEach((p, i) => { const cx = 140 + i * 82, cy = 196, R = 32, g = x.createRadialGradient(cx - 14, cy - 16, 4, cx, cy, R);
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, 40, 0, Math.PI * 2); x.fill();
+    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, 39, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('SUN', cx, 274); }
+  PLANETS.forEach((p, i) => { const cx = 128 + i * 70, cy = 196, R = 26, g = x.createRadialGradient(cx - 14, cy - 16, 4, cx, cy, R);
     g.addColorStop(0, DISC[i][0]); g.addColorStop(1, DISC[i][1]);
     if (p.ring) { x.strokeStyle = 'rgba(236,217,164,.8)'; x.lineWidth = 5; x.beginPath(); x.ellipse(cx, cy, R * 1.5, R * 0.36, -0.3, 0, Math.PI * 2); x.stroke(); }
     x.fillStyle = g; x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.fill();
     if (p.ring) { x.save(); x.beginPath(); x.rect(cx - 80, cy, 160, 60); x.clip(); x.strokeStyle = 'rgba(236,217,164,.8)'; x.lineWidth = 5; x.beginPath(); x.ellipse(cx, cy, R * 1.5, R * 0.36, -0.3, 0, Math.PI * 2); x.stroke(); x.restore(); }
-    x.lineWidth = 2.5; x.strokeStyle = i === G.i ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, R + 9, 0, Math.PI * 2); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = i === G.i ? A : T + '.9)'; x.font = '500 13.5px ' + FONT; sp('0.08em'); x.fillText(p.name.toUpperCase(), cx, 274); });
-  { const cx = 800, cy = 196, R = 30, on = G.i === MOON, g = x.createRadialGradient(cx - 10, cy - 12, 4, cx, cy, R);                  // the Moon
+    x.lineWidth = 2.5; x.strokeStyle = i === G.i ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, R + 7, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = i === G.i ? A : T + '.9)'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText(p.name.toUpperCase(), cx, 274); });
+  { const cx = 690, cy = 196, R = 26, on = G.i === MOON, g = x.createRadialGradient(cx - 10, cy - 12, 4, cx, cy, R);                  // the Moon
     g.addColorStop(0, '#e8e6e0'); g.addColorStop(1, '#55534e'); x.fillStyle = g; x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.fill();
     x.fillStyle = 'rgba(40,40,44,.45)'; for (const [dx, dy, r] of [[-8, -6, 8], [9, 4, 6], [-3, 12, 5]]) { x.beginPath(); x.arc(cx + dx, cy + dy, r, 0, Math.PI * 2); x.fill(); }
-    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, R + 9, 0, Math.PI * 2); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 13.5px ' + FONT; sp('0.08em'); x.fillText('MOON', cx, 274); }
-  { const cx = 918, cy = 196, on = G.i === SYS;                                    // the whole system at once
-    x.lineWidth = 1.5; x.strokeStyle = on ? A : T + '.55)'; for (const r of [16, 27, 38]) { x.beginPath(); x.ellipse(cx, cy, r * 1.25, r * 0.62, -0.25, 0, Math.PI * 2); x.stroke(); }
+    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, R + 7, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('MOON', cx, 274); }
+  { const cx = 762, cy = 196, on = G.i === COMET;                                  // the comet
+    x.save(); x.beginPath(); x.arc(cx, cy, 32, 0, Math.PI * 2); x.clip();
+    let g = x.createLinearGradient(cx - 12, cy + 10, cx + 30, cy - 24); g.addColorStop(0, 'rgba(255,236,200,.75)'); g.addColorStop(1, 'rgba(255,236,200,0)');
+    x.fillStyle = g; x.beginPath(); x.moveTo(cx - 16, cy + 6); x.quadraticCurveTo(cx + 6, cy - 18, cx + 34, cy - 14); x.lineTo(cx + 30, cy - 34); x.quadraticCurveTo(cx, cy - 16, cx - 8, cy + 14); x.fill();
+    g = x.createLinearGradient(cx - 12, cy + 10, cx + 10, cy - 34); g.addColorStop(0, 'rgba(110,160,255,.8)'); g.addColorStop(1, 'rgba(110,160,255,0)');
+    x.strokeStyle = g; x.lineWidth = 3; x.beginPath(); x.moveTo(cx - 12, cy + 10); x.lineTo(cx + 8, cy - 34); x.stroke();
+    g = x.createRadialGradient(cx - 12, cy + 10, 1, cx - 12, cy + 10, 11); g.addColorStop(0, '#fff'); g.addColorStop(0.4, 'rgba(190,255,225,.9)'); g.addColorStop(1, 'rgba(190,255,225,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(cx - 12, cy + 10, 11, 0, Math.PI * 2); x.fill(); x.restore();
+    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, 33, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('COMET', cx, 274); }
+  { const cx = 834, cy = 196, on = G.i === ISS;                                    // the space station
+    x.fillStyle = '#2b4fb0'; for (const dx of [-25, -17, 11, 19]) for (const dy of [-20, 4]) x.fillRect(cx + dx, cy + dy, 6, 16);
+    x.fillStyle = '#c9ccd2'; x.fillRect(cx - 27, cy - 1.5, 54, 3); x.fillRect(cx - 3.5, cy - 12, 7, 26); x.fillStyle = '#eef0f4'; x.fillRect(cx - 9, cy - 9, 4, 8); x.fillRect(cx + 5, cy - 9, 4, 8);
+    x.lineWidth = 2.5; x.strokeStyle = on ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, 33, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.9)'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('ISS', cx, 274); }
+  { const cx = 930, cy = 196, on = G.i === SYS;                                    // the whole system at once
+    x.lineWidth = 1.5; x.strokeStyle = on ? A : T + '.55)'; for (const r of [14, 24, 34]) { x.beginPath(); x.ellipse(cx, cy, r * 1.25, r * 0.62, -0.25, 0, Math.PI * 2); x.stroke(); }
     x.fillStyle = '#ffd98a'; x.beginPath(); x.arc(cx, cy, 8, 0, Math.PI * 2); x.fill();
-    x.fillStyle = on ? A : T + '.9)'; for (const [dx, dy] of [[21, -6], [-36, 9], [48, 18]]) { x.beginPath(); x.arc(cx + dx, cy + dy, 3.5, 0, Math.PI * 2); x.fill(); }
-    x.textAlign = 'center'; x.font = '500 15px ' + FONT; sp('0.12em'); x.fillText('SOL SYSTEM', cx, 274); }
+    x.fillStyle = on ? A : T + '.9)'; for (const [dx, dy] of [[18, -6], [-31, 8], [41, 12]]) { x.beginPath(); x.arc(cx + dx, cy + dy, 3.5, 0, Math.PI * 2); x.fill(); }
+    x.textAlign = 'center'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('SOL SYSTEM', cx, 274); }
   PILLS.forEach(([id, label], i) => { const px = 40 + i * 95, on = (id === 'deep' && S.sheet === 'deep') || (id === 'back' && G.i >= 0) || (id === 'sound' && Snd.muted) || (id === 'help' && S.sheet === 'help') || (id === 'log' && S.sheet === 'log');
     if (id === 'ground') label = S.groundT ? 'TO SPACE' : 'TO LAKE'; if (id === 'sound') label = Snd.muted ? 'SOUND OFF' : 'SOUND ON';
     x.lineWidth = 2; x.strokeStyle = on ? A : T + '.6)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.06)';
@@ -905,13 +1079,13 @@ function panelHit(o, d) {         // where does a ray meet the console? returns 
 }
 function panelButton(uv) { const px = uv[0] * 1024, py = uv[1] * 512;
   if (px > 636 && py < 80) return 'scan';
-  if (py > 140 && py < 290) { if (px < 99) return SUN; if (px > 858) return SYS; if (px > 757) return MOON; const i = Math.round((px - 140) / 82); if (i >= 0 && i < PLANETS.length) return i; }
+  if (py > 140 && py < 290) { if (px < 93) return SUN; if (px > 876) return SYS; if (px > 798) return ISS; if (px > 726) return COMET; if (px > 654) return MOON; const i = Math.round((px - 128) / 70); if (i >= 0 && i < PLANETS.length) return i; }
   if (py > 360 && py < 440) for (let i = 0; i < PILLS.length; i++) if (px > 40 + i * 95 && px < 128 + i * 95) return PILLS[i][0];
   return null; }
 function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return; blip();
   if (b === 'scan') startEvent();
   else if (b === SYS) { if (G.i !== SYS) summonSystem(); }
-  else if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], skyDirOf(b), b === SUN ? 0.26 : 0.2, eye); }
+  else if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], skyDirOf(b), b === SUN ? 0.26 : b === ISS ? 0.3 : b === COMET ? 0.13 : 0.2, eye); }
   else if (b === 'smaller' || b === 'larger') { if (G.i >= 0 && !G.anim) G.radT = Math.max(0.04, Math.min(2.5, (G.radT || G.rad) * (b === 'larger' ? 1.45 : 1 / 1.45))); }
   else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround();
   else if (b === 'sound') toggleMute(); else if (b === 'help' || b === 'log' || b === 'deep') S.sheet = S.sheet === b ? '' : b; else { backToNow(); goHome(); } }
@@ -927,7 +1101,7 @@ const spc = (x, v) => { try { x.letterSpacing = v; } catch (e) {} };
 const helpCv = document.createElement('canvas'); helpCv.width = 1024; helpCv.height = 800;
 const helpVao = board([-1.3, 1.5, -1.5], 1.2, 0.9375);      // the left-hand sheet: help, logbook or the deep-sky list
 const HELP = [
-  ['TRIGGER', [['on the console', 'press that button'], ['on a star with a name card', 'travel there'], ['on a planet in the sky', 'bring it to you'], ['on a globe', 'hold to grab, turn and move it'],
+  ['TRIGGER', [['on the console', 'press that button'], ['on a star with a name card', 'travel there'], ['on a planet, the comet or the ISS', 'bring it to you'], ['on a globe', 'hold to grab, turn and move it'],
     ['in the Sol System model', 'zoom that planet in (the Sun: quick tap)'], ['on empty sky', 'tap: change the view   ·   hold: fly freely'], ['pointing straight down', 'bring up Earth']]],
   ['HOLDING A GLOBE', [['second hand on it too', 'pull apart or together to resize'], ['thumbstick up / down', 'resize']]],
   ['OTHER BUTTONS', [['grip', 'lake or open space'], ['thumbstick left / right', 'travel through time'], ['thumbstick up / down', 'drift speed while floating'], ['A  /  X', 'back home and back to now'], ['B  /  Y', 'send the globe back']]],
@@ -957,14 +1131,15 @@ function drawDeep() {
   x.fillStyle = T + '.45)'; x.font = '400 17px ' + FONT; spc(x, '0.06em'); x.fillText('Most are southern objects that never rise over ' + PLACE + ': the list takes you there anyway.', 44, 772);
   gl.bindTexture(gl.TEXTURE_2D, deepTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, deepCv); gl.generateMipmap(gl.TEXTURE_2D);
 }
-function deepRow(o, d) {          // which row of the deep-sky list does this ray touch? (-1: none)
-  if (S.sheet !== 'deep') return -1;
+function deepRow(o, d) {          // what on the left-hand sheet does this ray touch? a row of the deep-sky list, -2 for the logbook's reset button, -1 for nothing
+  if (S.sheet !== 'deep' && S.sheet !== 'log') return -1;
   const c = [SHEET.c[0], SHEET.c[1] + S.floorY, SHEET.c[2]], n = norm([-c[0], 0, -c[2]]), r = norm(cross([0, 1, 0], n)), dn = dot(d, n); if (Math.abs(dn) < 1e-5) return -1;
   const t = dot(add3(c, o, -1), n) / dn; if (t <= 0 || t > 8) return -1;
   const q = add3(add3(o, d, t), c, -1), u = dot(q, r) / SHEET.w + 0.5, v = 0.5 - q[1] / SHEET.h; if (u < 0 || u > 1 || v < 0 || v > 1) return -1;
+  if (S.sheet === 'log') return u * 1024 > 716 && v * 800 > 28 && v * 800 < 88 ? -2 : -1;
   const row = Math.floor((v * 800 - 99) / 38); return row >= 0 && row < DSO.length ? row : -1;
 }
-function deepPress(row) { blip(); if (S.at !== DSO0 + row) warpTo(DSO0 + row); }
+function deepPress(row) { blip(); if (row === -2) return resetLog(); if (S.at !== DSO0 + row) warpTo(DSO0 + row); }
 
 // what there is to know about the thing in front of you
 const FACTS = [
@@ -980,6 +1155,10 @@ const FACTS = [
   ['THE SUN', 'Our star', [['Diameter', '1.39 million km   ·   109 × Earth'], ['Surface', 'about 5,500 °C'], ['Age', '4.6 billion years'], ['Share of the system\'s mass', '99.8 %'], ['Light reaches Earth in', '8 min 20 s']], 'A yellow dwarf, class G2.'],
 ];
 FACTS[MOON] = ['THE MOON', 'Earth\'s companion', [['Diameter', '3,474 km   ·   0.27 × Earth'], ['Distance', '384,400 km on average'], ['One orbit', '27.3 days'], ['New moon to new moon', '29.5 days'], ['Tonight', '']], 'It always shows us the same face.'];
+FACTS[COMET] = ['COMET', 'Ice and dust from the edge of the Sun\'s realm', [['Nucleus', 'a few km of ice, dust and rock'], ['Surface', 'darker than coal'], ['Coma', 'a gas cloud wider than Jupiter'],
+  ['Tails', 'pale curved dust, straight blue gas'], ['They point', 'always away from the Sun']], 'This visitor is invented. Its shape follows comet 67P, which Rosetta reached in 2014.'];
+FACTS[ISS] = ['ISS', 'International Space Station', [['Size', '109 m across, like a football pitch'], ['Mass', 'about 420 tonnes'], ['Height', 'about 400 km above the ground'], ['Speed', '27,600 km/h   ·   one orbit in 93 min'],
+  ['Crew', 'usually 7   ·   lived in since 2000']], 'The passes here are staged; real ones are listed online. The model is simplified.'];
 function dsoFacts(i) { const o = PICK[i][6], g = dsoGeo[i - DSO0], n = v => v >= 1e6 ? (v / 1e6).toLocaleString('en-GB', { maximumSignificantDigits: 2 }) + ' million' : v.toLocaleString('en-GB', { maximumSignificantDigits: 2 });
   return [o[0].toUpperCase(), 'A ' + o[1] + ' in ' + o[3], [['From home', 'about ' + n(o[2]) + ' light-years'], ['This picture spans', 'about ' + n(g.half * 4.6) + ' light-years'],
     ['Its light left', o[2] < 3000 ? 'around ' + (o[2] < 2020 ? Math.round((2026 - o[2]) / 10) * 10 + ' AD' : (Math.round((o[2] - 2026) / 100) * 100).toLocaleString('en-GB') + ' BC') : n(o[2]) + ' years ago'], ['Image', o[5]]], o[4]]; }
@@ -1029,7 +1208,7 @@ const TAGS = ['MERCURY', 'VENUS', 'EARTH', 'MARS', 'JUPITER', 'SATURN', 'URANUS'
   'press', 'travel there', 'bring it here', 'hold to grab', 'zoom in', 'tap: zoom in   ·   hold: move the model', 'bring up Earth',
   'FIREBALL', 'METEOR SHOWER', 'AURORA', 'SUPERNOVA', 'look north', 'look north-east', 'look east', 'look south-east', 'look south', 'look south-west', 'look west', 'look north-west', 'look overhead',
   'a simulation: this has not happened', 'MISSION COMPLETE',
-  'MOON', 'PHOBOS', 'DEIMOS', 'IO', 'EUROPA', 'GANYMEDE', 'CALLISTO', 'RHEA', 'TITAN', 'TITANIA', 'OBERON', 'TRITON'], tagW = [];
+  'MOON', 'PHOBOS', 'DEIMOS', 'IO', 'EUROPA', 'GANYMEDE', 'CALLISTO', 'RHEA', 'TITAN', 'TITANIA', 'OBERON', 'TRITON', 'COMET', 'ISS', 'SPACE STATION PASSING'], tagW = [];
 const H_PRESS = 10, H_TRAVEL = 11, H_BRING = 12, H_GRAB = 13, H_ZOOM = 14, H_SUN = 15, H_EARTH = 16;
 let tagTex; { const cv = document.createElement('canvas'); cv.width = 1024; cv.height = TAGS.length * 48; const x = cv.getContext('2d'); x.fillStyle = '#fff'; x.textBaseline = 'middle';
   TAGS.forEach((t, i) => { x.font = (i < 10 ? '500 30px ' : '400 30px ') + FONT; spc(x, i < 10 ? '0.2em' : '0.06em'); x.fillText(t, 4, i * 48 + 25); tagW[i] = Math.ceil(x.measureText(t).width) + 8; });
@@ -1042,14 +1221,20 @@ let compassTex, compassVao; { const cv = document.createElement('canvas'); cv.wi
     const o = [Math.sin(az), -Math.cos(az)], r = [Math.cos(az), Math.sin(az)], R = 2.17, h = 0.3, u0 = (i % 4) / 4, v0 = (i >> 2) / 2;
     for (const [a, b, uu, vv] of [[-1, 1, 0, 0], [1, 1, 1, 0], [-1, -1, 0, 1], [1, -1, 1, 1]])
       v.push(o[0] * R + r[0] * a * h / 2 + o[0] * b * h / 2, 0.004, o[1] * R + r[1] * a * h / 2 + o[1] * b * h / 2, u0 + uu / 4, v0 + vv / 2); });
-  compassTex = textTexture(cv); compassVao = vao(tagProg, new Float32Array(v), [['aPos', 3], ['aUV', 2]], quadIndex(8)); }
-const tagData = new Float32Array(16 * 20), tagVao = vao(tagProg, tagData, [['aPos', 3], ['aUV', 2]], quadIndex(16), gl.DYNAMIC_DRAW);
+  [0, 90, 180, 270].forEach((azd, i) => { const az = azd * D, o = [Math.sin(az), -Math.cos(az)], r = [Math.cos(az), Math.sin(az)], R = 2.5, h = 0.2, u0 = i / 4;   // standing on the rail
+    for (const [a, b, uu, vv] of [[-1, 1, 0, 0], [1, 1, 1, 0], [-1, 0, 0, 1], [1, 0, 1, 1]]) v.push(o[0] * R + r[0] * a * h / 2, 1.06 + b * h, o[1] * R + r[1] * a * h / 2, u0 + uu / 4, vv / 2); });
+  compassTex = textTexture(cv); compassVao = vao(tagProg, new Float32Array(v), [['aPos', 3], ['aUV', 2]], quadIndex(12)); }
+const tagData = new Float32Array(20 * 20), tagVao = vao(tagProg, tagData, [['aPos', 3], ['aUV', 2]], quadIndex(20), gl.DYNAMIC_DRAW);
 let tagCount = 0;
 function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text height in metres }]
   const list = hints.slice(0, 3);
   if (EV.cur && EV.cur.t < 9) { const y = S.floorY + 1.41;                    // the announcement floats above the console for a few seconds
     list.push({ p: [0, y, -0.84], k: TAGS.indexOf(EVENT_NAMES[EV.cur.type]), h: 0.05 }, { p: [0, y - 0.065, -0.84], k: TAGS.indexOf(EV.cur.look), h: 0.032 });
     if (EV.cur.type === 'supernova') list.push({ p: [0, y - 0.115, -0.84], k: TAGS.indexOf('a simulation: this has not happened'), h: 0.022 }); }
+  else if (S.time < VIS.ann) { const y = S.floorY + 1.41; list.push({ p: [0, y, -0.84], k: TAGS.indexOf('SPACE STATION PASSING'), h: 0.045 }, { p: [0, y - 0.065, -0.84], k: TAGS.indexOf(VIS.look), h: 0.032 }); }
+  const near = d => S.fwd && dot(d, S.fwd) > 0.82;        // the visitors are named while you look their way
+  if (cometShown()) { const d = applySky(S.sky, S.cometDir); if (near(d)) list.push({ p: add3(add3(S.head, d, 30), [0, -1.3, 0]), k: TAGS.indexOf('COMET'), h: 0.6 }); }
+  if (issShown() && near(S.issDir)) list.push({ p: add3(add3(S.head, S.issDir, 6), [0, -0.3, 0]), k: TAGS.indexOf('ISS'), h: 0.13 });
   if (S.time < missionUntil) list.push({ p: [0, S.floorY + 1.235, -0.86], k: TAGS.indexOf('MISSION COMPLETE'), h: 0.04 });
   if (MOONS[G.i] && !G.anim && G.tex) { const h = Math.max(0.011, 0.085 * G.rad); for (const m of moonsOf(G)) list.push({ p: [m.p[0], m.p[1] + m.r + h * 0.9, m.p[2]], k: TAGS.indexOf(m.name), h }); }
   if (G.i === SYS && !G.anim) { const h = Math.max(0.022, 0.034 * G.rad);
@@ -1062,7 +1247,7 @@ function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text h
   if (tagCount) { gl.bindBuffer(gl.ARRAY_BUFFER, tagVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, tagData); }
 }
 function triggerHint(c, off) {    // what would the trigger do for this hand right now? (same order as the trigger itself)
-  if ((panelHit(c.o, c.d) && !hitsGlobe(c.o, c.d, c.gp)) || deepRow(c.o, c.d) >= 0) return H_PRESS;
+  if ((panelHit(c.o, c.d) && !hitsGlobe(c.o, c.d, c.gp)) || deepRow(c.o, c.d) !== -1) return H_PRESS;
   const sb = sysBodyAt(c.o, c.d); if (sb >= 0) return sb === SUN ? H_SUN : H_ZOOM;
   if (hitsGlobe(c.o, c.d, c.gp)) return H_GRAB;
   const i = planetAt(c.d, off); if (i >= 0) return i === 2 ? H_EARTH : H_BRING;
@@ -1169,6 +1354,7 @@ const MISSIONS = [
   { t: 'Travel to a nebula or a star cluster (see DEEP SKY on the console)', ok: () => LOG.deep.length >= 1 },
   { t: 'Leave the Milky Way: reach another galaxy', ok: () => LOG.flags.galaxy },
   { t: 'Find a double star, such as Albireo, Mizar or Rigil Kentaurus', ok: () => LOG.flags.double },
+  { t: 'Bring the comet or the space station aboard', ok: () => LOG.bodies.includes(COMET) || LOG.bodies.includes(ISS) },
 ];
 function updateLog(dt, forward) {
   if ((logTick += dt) < 1) return; logTick = 0;
@@ -1179,18 +1365,26 @@ function updateLog(dt, forward) {
 }
 const logCv = document.createElement('canvas'); logCv.width = 1024; logCv.height = 800;
 const logTex = textTexture(logCv);
+let resetArmed = 0;
+function resetLog() {             // two presses, so a slip of the hand cannot wipe it
+  if (S.time > resetArmed) { resetArmed = S.time + 5; return; }
+  for (const k of ['stars', 'bodies', 'cons', 'events', 'done', 'deep']) LOG[k] = [];
+  LOG.flags = {}; LOG.far = 0; LOG.visits = 1; resetArmed = 0; saveLog();
+}
 function drawLog() {
-  if (logDrawn === logVer) return; logDrawn = logVer;
+  const armed = S.time < resetArmed, key = logVer + (armed ? 'a' : ''); if (logDrawn === key) return; logDrawn = key;
   const x = logCv.getContext('2d'), T = 'rgba(70,215,230,', A = '#ffa64a'; sheetBase(x, 1024, 800);
   x.fillStyle = T + '.95)'; x.font = '300 34px ' + FONT; spc(x, '0.34em'); x.fillText('LOGBOOK', 44, 58);
-  x.textAlign = 'right'; x.fillStyle = T + '.5)'; x.font = '400 17px ' + FONT; spc(x, '0.1em'); x.fillText('VISIT ' + LOG.visits, 980, 58); x.textAlign = 'left';
+  x.fillStyle = T + '.5)'; x.font = '400 17px ' + FONT; spc(x, '0.1em'); x.fillText('VISIT ' + LOG.visits, 300, 60);
+  x.lineWidth = 2; x.strokeStyle = armed ? A : T + '.5)'; x.fillStyle = armed ? 'rgba(255,166,74,.14)' : T + '.05)'; x.beginPath(); x.roundRect(724, 32, 256, 50, 12); x.fill(); x.stroke();
+  x.textAlign = 'center'; x.fillStyle = armed ? A : T + '.85)'; x.font = '500 16px ' + FONT; spc(x, '0.1em'); x.fillText(armed ? 'PRESS AGAIN TO ERASE' : 'START A NEW LOGBOOK', 852, 58); x.textAlign = 'left'; x.lineWidth = 2;
   const stats = [['Stars visited', LOG.stars.length], ['Constellations', LOG.cons.length + ' / 88'], ['Planets', heldPlanets() + ' / 8'], ['Deep sky', LOG.deep.length + ' / ' + DSO.length], ['Sky events', LOG.events.length + ' / 4'], ['Farthest', Math.round(LOG.far).toLocaleString('en-GB') + ' ly']];
-  stats.forEach(([a, b], i) => { const px = 44 + i * 158; x.fillStyle = T + '.6)'; x.font = '500 15px ' + FONT; spc(x, '0.12em'); x.fillText(a.toUpperCase(), px, 108);
+  stats.forEach(([a, b], i) => { const px = 44 + i * 158; x.fillStyle = T + '.6)'; x.font = '500 13px ' + FONT; spc(x, '0.08em'); x.fillText(a.toUpperCase(), px, 108);
     x.fillStyle = '#e6f2ff'; x.font = '300 34px ' + FONT; spc(x, '0.02em'); x.fillText(String(b), px, 146); });
   x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(44, 182); x.lineTo(980, 182); x.stroke();
   x.fillStyle = A; x.font = '500 19px ' + FONT; spc(x, '0.2em'); x.fillText('MISSIONS   ' + LOG.done.length + ' / ' + MISSIONS.length, 44, 214);
   const next = MISSIONS.findIndex((_, i) => !LOG.done.includes(i));
-  MISSIONS.forEach((m, i) => { const y = 252 + i * 31, done = LOG.done.includes(i); x.font = '400 21px ' + FONT; spc(x, '0.02em');
+  MISSIONS.forEach((m, i) => { const y = 246 + i * 25.5, done = LOG.done.includes(i); x.font = '400 19px ' + FONT; spc(x, '0.02em');
     x.fillStyle = done ? T + '.9)' : i === next ? A : T + '.35)'; x.fillText(done ? '✓' : i === next ? '›' : '·', 50, y);
     x.fillStyle = done ? T + '.55)' : i === next ? '#e6f2ff' : T + '.6)'; x.fillText(m.t, 84, y); });
   const names = LOG.stars.slice(-14).join('   ·   ');
@@ -1241,7 +1435,7 @@ const S = window.S = {
   intro: 0,                          // seconds since the sky started appearing
   hi: -1, hiAmt: 0, help: 0, lastHi: -1,
   pick: -1, pickAmt: 0,              // the star you are pointing at
-  pos: [0, 0, 0], fdir: [0, 0, 1], fspeed: 0, warp: null, at: -1, trail: [0, 0, 0], streak: 0, away: 0, home: 1,   // where you are among the stars (parsecs from the Sun), and how fast you are going (light-years per second)
+  pos: [0, 0, 0], farQ: [0, 0, 0], farTrail: [0, 0, 0], far: 0, fdir: [0, 0, 1], fspeed: 0, warp: null, at: -1, trail: [0, 0, 0], streak: 0, away: 0, home: 1,   // where you are among the stars (parsecs from the Sun), and how fast you are going (light-years per second)
   pdirs: planetDirs(Date.now()), moonDir: moonDir(Date.now()),
   floorY: -1.6, hover: null, head: [0, 0, 0], sheet: '',         // floor height in the current space; where a hand points on the console
 
@@ -1250,7 +1444,7 @@ const S = window.S = {
   sky: skyMatrix(Date.now()), time: 0,
   drift: 0,                          // radians the whole sky has tumbled while floating
 };
-function restartIntro() { S.intro = 0; S.touched = false; S.mode = 0; S.nextMeteor = 22; S.meteors = []; EV.next = 110; }
+function restartIntro() { VIS.next = 45; S.intro = 0; S.touched = false; S.mode = 0; S.nextMeteor = 22; S.meteors = []; EV.next = 110; }
 function cycleMode() { S.mode = (S.mode + 1) % 4; S.touched = true; }
 function toggleGround() { S.groundT = S.groundT ? 0 : 1; soundSpace(); }
 function backToNow() { S.sim = Date.now(); S.speed = 1; S.clockUntil = S.time + 3; }
@@ -1291,6 +1485,9 @@ function update(dt, forward, stick, stickY, rays, fly) {
     S.fspeed += (target - S.fspeed) * Math.min(1, dt * (fly ? 4 : 2.5));
     if (fly) { S.fdir = unSky(A, fly.dir); if (S.groundT) toggleGround(); }
     if (S.fspeed > 0.001) { S.pos = add3(S.pos, S.fdir, S.fspeed * dt / LY); const r = plen(); if (r > MAXPC) S.pos = S.pos.map(x => x * MAXPC / r); } }
+  { const r = plen(), k = r > 1 ? Math.log(1 + r / FARL) / r : 1 / FARL, q = S.pos.map(x => x * k);      // logarithmic, so a trip of 60 million light-years does not become a blur
+    const tr = dt > 0 ? add3(q, S.farQ, -1).map(x => x / dt * 0.1) : [0, 0, 0], tl = Math.hypot(tr[0], tr[1], tr[2]);
+    S.farTrail = tl > 0.1 ? tr.map(x => x * 0.1 / tl) : tr; S.farQ = q; S.far = Math.min(1, Math.max(0, (r * LY - 6000) / 40000)); }
   S.away = plen() * LY; S.home = 1 - Math.min(1, Math.max(0, (S.away - 0.3) / 1.7));
   if (S.away > 0.3) setSunCard();
   const vel = dt > 0 ? add3(S.pos, before, -1).map(x => x / dt) : [0, 0, 0], sp = Math.hypot(vel[0], vel[1], vel[2]);   // parsecs per second
@@ -1304,7 +1501,8 @@ function update(dt, forward, stick, stickY, rays, fly) {
     for (let n = 0; n < 4; n++) planetLab.set([d[0], d[1], d[2], gone ? 0 : k[n][0] * L[0], gone ? 0 : L[2] + k[n][1] * L[1], k[n][0] > 0 ? L[5] : L[3], k[n][1] > 0 ? L[4] : L[6], 6, -1], i * 36 + n * 9); });
   { const n = EV.cur && EV.cur.type === 'supernova' ? EV.cur.star : -1, q = n >= 0 ? pickPos[n] : [0, 0, 1];          // the exploding star, if there is one
     planetPts.set([q[0], q[1], q[2], n >= 0 && S.nova > 0.002 ? 1.5 - 11 * S.nova - 5 * Math.log10(Math.hypot(q[0], q[1], q[2]) / 10) : 40, 0.05], (PLANETS.length + 1) * 5); }
-  planetPts.set([0, 0, 0, S.away > 0.3 ? 4.83 : 40, 0.65], PLANETS.length * 5);          // the Sun: only a star once you have left it behind
+  planetPts.set([0, 0, 0, S.away > 0.3 ? 4.83 : 40, 0.65], PLANETS.length * 5);
+  S.fwd = forward; updateVisitors(dt);          // the Sun: only a star once you have left it behind
   gl.bindBuffer(gl.ARRAY_BUFFER, planetPtVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, planetPts);
   gl.bindBuffer(gl.ARRAY_BUFFER, planetLabVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, planetLab);
   // constellations draw themselves in once your eyes have adapted
@@ -1355,6 +1553,7 @@ const IDENT3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 let starTex = null, starTexAsked = false;
 function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
   if (G.i === SYS && G.tex) drawSystem(PVF, eye || [0, 0, 0]);
+  else if (G.i >= COMET && G.tex) drawVisitor(PVF, eye || [0, 0, 0]);
   else if (G.i >= 0 && G.tex) {                       // the planet in the room is a real object: it has depth and a lit side
     const M = modelMatrix(G.q, G.pos, G.rad), P = BODY(G.i);
     gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
@@ -1372,7 +1571,7 @@ function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
   }
 }
 function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
-  eoff = eoff || [0, 0, 0];
+  eoff = eoff || [0, 0, 0]; S.px = vpH / 1000;
   const PV = mul4(proj, viewRot), reveal = -2.5 + S.intro * 1.1, mw = Math.min(1, Math.max(0, (S.intro - 5) / 8));
   gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
   gl.useProgram(globe.p); gl.uniform1f(globe.u.uDim, 1);
@@ -1401,9 +1600,20 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
     gl.useProgram(streak.p); gl.uniformMatrix4fv(streak.u.uPV, false, PV); gl.uniformMatrix3fv(streak.u.uSky, false, S.sky);
     gl.uniform3fv(streak.u.uCam, S.pos); gl.uniform3fv(streak.u.uEye, eoff); gl.uniform3fv(streak.u.uTrail, S.trail); gl.uniform1f(streak.u.uAmt, S.streak);
     gl.bindVertexArray(streakVao.v); gl.drawArrays(gl.LINES, 0, streakCount); gl.useProgram(stars.p); }
-  gl.bindVertexArray(planetPtVao.v); gl.uniform1f(stars.u.uMirror, 0); gl.drawArrays(gl.POINTS, 0, PLANETS.length + 2);
+  gl.bindVertexArray(planetPtVao.v); gl.uniform1f(stars.u.uMirror, 0); gl.drawArrays(gl.POINTS, 0, PLANETS.length + 3);
+  if (S.ground > 0.01) { gl.uniform1f(stars.u.uMirror, 1); gl.drawArrays(gl.POINTS, PLANETS.length + 2, 1); }
   if (S.ground > 0.01) { gl.uniform1f(stars.u.uMirror, 1); gl.drawArrays(gl.POINTS, 0, PLANETS.length); }
 
+  if (cometShown()) { const C = applySky(S.sky, S.cometDir), U = applySky(S.sky, S.cometTail);
+    gl.useProgram(cometSky.p); gl.uniformMatrix4fv(cometSky.u.uPV, false, PV); gl.uniform3fv(cometSky.u.uC, C); gl.uniform3fv(cometSky.u.uU, U); gl.uniform3fv(cometSky.u.uV, cross(C, U));
+    gl.uniform1f(cometSky.u.uGround, S.ground); gl.uniform1f(cometSky.u.uAmt, Math.min(1, Math.max(0, (S.intro - 9) / 6)));
+    gl.bindVertexArray(cometSkyVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+  if (S.far > 0.003) {                               // out between the galaxies
+    gl.useProgram(far.p); gl.uniformMatrix4fv(far.u.uPV, false, PV); gl.uniformMatrix3fv(far.u.uSky, false, S.sky); gl.uniform3fv(far.u.uQ, S.farQ); gl.uniform3fv(far.u.uEye, eoff);
+    gl.uniform1f(far.u.uPx, vpH / 1000); gl.uniform1f(far.u.uAmt, S.far); gl.uniform1f(far.u.uLine, 0); gl.uniform3f(far.u.uTrail, 0, 0, 0);
+    gl.bindVertexArray(farPts.v); gl.drawArrays(gl.POINTS, 0, FARN);
+    if (S.streak > 0.01) { gl.uniform1f(far.u.uLine, 1); gl.uniform3fv(far.u.uTrail, S.farTrail.map(x => -x)); gl.uniform1f(far.u.uAmt, S.far * S.streak);
+      gl.bindVertexArray(farLines.v); gl.drawArrays(gl.LINES, 0, FARN * 2); } }
   { let q = 0; const draws = [];                     // deep-sky photographs
     DSO.forEach((o, n) => { const g = dsoGeo[n], rel = add3(g.c, S.pos, -1), dist = Math.hypot(rel[0], rel[1], rel[2]), w = applySky(S.sky, rel.map(x => x / dist));
       const first = q; q += g.tiles.length; if (S.ground > 0.5 && w[1] < 0.02) return;
@@ -1467,7 +1677,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   if (infoOn) { gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.bindVertexArray(infoVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
   gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
-  gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 48, gl.UNSIGNED_INT, 0);
+  gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 72, gl.UNSIGNED_INT, 0);
   if (S.at >= 0 && S.at < DSO0) {                    // you have stopped at a star: here it is as a sun
     if (!starTex && !starTexAsked) { starTexAsked = true; loadTex('data:image/webp;base64,' + STEX, t => starTex = t); }
     if (starTex) { const i = S.at, dir = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), dbl = DOUBLES[PICK[i][3]], mid = add3(S.head, dir, dbl ? 4.2 : 3.5);
@@ -1524,7 +1734,7 @@ canvas.addEventListener('pointermove', e => { mouse = [e.clientX / canvas.client
   const k = S.fov / canvas.clientHeight; S.yaw -= (e.clientX - drag[0]) * k; S.pitch += (e.clientY - drag[1]) * k;
   S.pitch = Math.max(-89 * D, Math.min(89 * D, S.pitch)); drag = [e.clientX, e.clientY]; });
 canvas.addEventListener('pointerup', e => { const ray = eventRay(e); const sb = drag && moved < 5 && ray && !panelHit([0, 0, 0], ray) ? sysBodyAt([0, 0, 0], ray) : -1; if (sb >= 0) zoomBody(sb, [0, 0, 0]);
-  else if (drag && moved < 5 && !dragGlobe && ray) { const uv = panelHit([0, 0, 0], ray), dr = uv ? -1 : deepRow([0, 0, 0], ray); if (uv) panelPress(uv, [0, 0, 0]); else if (dr >= 0) deepPress(dr); else { const i = planetAt(ray); if (i >= 0) summonFlat(i); else if (S.pick >= 0 && S.pick !== S.at && S.pickAmt > 0.5 && !S.warp) warpTo(S.pick); } } drag = null; dragGlobe = false; });
+  else if (drag && moved < 5 && !dragGlobe && ray) { const uv = panelHit([0, 0, 0], ray), dr = uv ? -1 : deepRow([0, 0, 0], ray); if (uv) panelPress(uv, [0, 0, 0]); else if (dr !== -1) deepPress(dr); else { const i = planetAt(ray); if (i >= 0) summonFlat(i); else if (S.pick >= 0 && S.pick !== S.at && S.pickAmt > 0.5 && !S.warp) warpTo(S.pick); } } drag = null; dragGlobe = false; });
 canvas.addEventListener('pointerleave', () => mouse = null);
 canvas.addEventListener('wheel', e => { e.preventDefault(); if (G.i >= 0 && !G.anim) { G.rad = Math.max(0.05, Math.min(0.75, G.rad * (1 - Math.sign(e.deltaY) * 0.08))); return; }
   S.fov = Math.max(20 * D, Math.min(100 * D, S.fov * (1 + Math.sign(e.deltaY) * 0.08))); e.preventDefault(); }, { passive: false });
@@ -1533,7 +1743,7 @@ addEventListener('keydown', e => { const k = e.key.toLowerCase(); if (k !== 'm')
   if (k === 'm') toggleMute(); else if (k === 'c') cycleMode(); else if (k === 'g') toggleGround(); else if (k === 'n') backToNow();
   else if (k === 'e') startEvent(['fireball', 'shower', 'aurora', 'supernova'][EV.turn++ % 4]);
   else if (k === 'w') { if (!flyKey) flyKey = S.time || 1e-6; } else if (k === 'h') goHome();
-  else if (k === 'b') dismiss(); else if (k >= '1' && k <= '8') summonFlat(+k - 1); else if (k === '9') summonSystem(); else if (k === '0') summonFlat(SUN); else if (k === 'o') summonFlat(MOON);
+  else if (k === 'b') dismiss(); else if (k >= '1' && k <= '8') summonFlat(+k - 1); else if (k === '9') summonSystem(); else if (k === '0') summonFlat(SUN); else if (k === 'o') summonFlat(MOON); else if (k === 'k') summonFlat(COMET); else if (k === 'i') summonFlat(ISS);
   else if (e.key === 'ArrowRight') keyStick = 0.75; else if (e.key === 'ArrowLeft') keyStick = -0.75;
   else if (e.key === 'ArrowUp') keyStickY = -1; else if (e.key === 'ArrowDown') keyStickY = 1; });
 addEventListener('keyup', e => { if (e.key.toLowerCase() === 'w') flyKey = 0; if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') keyStick = 0; if (e.key === 'ArrowUp' || e.key === 'ArrowDown') keyStickY = 0; });
@@ -1562,7 +1772,7 @@ vrBtn.addEventListener('click', async () => {
     const pending = new Map();      // trigger pressed on empty sky: a tap changes the constellation view, holding flies
     session.addEventListener('selectstart', e => { const src = e.inputSource, c = ctl.get(src); if (!c) return cycleMode();
       const uv = panelHit(c.o, c.d); if (uv && !hitsGlobe(c.o, c.d, c.gp)) return panelPress(uv, head);
-      const dr = deepRow(c.o, c.d); if (dr >= 0) return deepPress(dr);
+      const dr = deepRow(c.o, c.d); if (dr !== -1) return deepPress(dr);
       const sb = sysBodyAt(c.o, c.d);                 // in the solar system model: a planet zooms at once; the Sun in the middle zooms on a quick tap and is the handle when held
       if (sb >= 0 && sb !== SUN) return zoomBody(sb, head);
       if (sb === SUN) tapSun = { src, t0: S.time };
