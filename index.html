@@ -36,7 +36,7 @@
   <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0).</p>
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
-    <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>E</kbd> sky event · <kbd>M</kbd> sound · <kbd>D</kbd> deep-sky list · <kbd>L</kbd> logbook · <kbd>?</kbd> help sheet</span>
+    <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>J</kbd> black hole · <kbd>S</kbd> life of a star · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>E</kbd> sky event · <kbd>M</kbd> sound · <kbd>D</kbd> deep-sky list · <kbd>L</kbd> logbook · <kbd>?</kbd> help sheet</span>
   </div>
 </div>
 <script>
@@ -105,6 +105,7 @@ function perspective(fovy, aspect, n, f) { const t = 1 / Math.tan(fovy / 2), o =
   o[0] = t / aspect; o[5] = t; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); return o; }
 
 // Equatorial → local sky (x east, y up, -z north) for a given moment.
+let RIDE_SKY = null;             // set while the scale ride is running: how the sky is turned then
 let WORLD = 0;                   // which world you stand on: an index into WORLDS
 const WORLDS = [                  // home: which planet's place in the Solar System you see from; pole and W: how the body is turned (IAU values: pole RA and Dec, prime meridian at J2000 and degrees per day)
   { id: 'earth', name: 'EARTH', place: PLACE, line: 'A still lake at night, under the sky of home.', home: 2, air: 1 },
@@ -126,6 +127,7 @@ function worldFrame(w, ms) {     // the body's own axes among the stars (X: wher
   return { X, Y, Z, Q, M, up: mix(cl * co, cl * so, sl), east: mix(-so, co, 0), north: mix(-sl * co, -sl * so, cl) };
 }
 function skyMatrix(ms) {
+  if (RIDE_SKY) return new Float32Array(RIDE_SKY);
   if (WORLD === 4) { const f = orbitFrame(ms); return new Float32Array([f.right[0], f.up[0], -f.fwd[0], f.right[1], f.up[1], -f.fwd[1], f.right[2], f.up[2], -f.fwd[2]]); }
   if (WORLD) { const f = worldFrame(WORLDS[WORLD], ms); return new Float32Array([f.east[0], f.up[0], -f.north[0], f.east[1], f.up[1], -f.north[1], f.east[2], f.up[2], -f.north[2]]); }
   const jd = ms / 86400000 + 2440587.5;
@@ -1236,16 +1238,18 @@ let deckVao, deckCount, stationCount = 0, panelVao;
 // what is on the console
 const panelCv = document.createElement('canvas'); panelCv.width = 1024; panelCv.height = 512;
 const panelCx = panelCv.getContext('2d'), panelTex = textTexture(panelCv);
-const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'SEND BACK'], ['view', 'FIGURES'], ['ground', ''], ['worlds', 'WORLDS'], ['time', 'DEEP TIME'], ['home', 'HOME'], ['sound', ''], ['deep', 'DEEP SKY'], ['log', 'LOGBOOK'], ['help', 'HELP']];
-const PILL_STEP = 948 / PILLS.length, SHEETS = ['help', 'log', 'deep', 'worlds', 'time'];
+const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'BACK'], ['view', 'FIGURES'], ['ground', ''], ['sound', ''], ['log', 'LOGBOOK'], ['help', 'HELP'],          // top row: what you hold and how things look
+  ['worlds', 'WORLDS'], ['time', 'DEEP TIME'], ['ride', 'SCALE'], ['life', 'STAR LIFE'], ['hole', 'BLACK HOLE'], ['deep', 'DEEP SKY'], ['home', 'HOME']];                                          // bottom row: places to go
+const pillRect = i => [40 + (i % 8) * 118.5, i < 8 ? 312 : 374, 111.5, 54], pillPt = i => { const r = pillRect(i); return [r[0] + r[2] / 2, r[1] + r[3] / 2]; };
+const SHEETS = ['help', 'log', 'deep', 'worlds', 'time'];
 const DISC = [['#8f8a86', '#3e3b39'], ['#f2deb0', '#8a6f3c'], ['#4f8fe0', '#12305e'], ['#e0683c', '#5e2414'], ['#e2c39a', '#7a5a3a'], ['#ecd9a4', '#7d6a3e'], ['#a9e6ea', '#3f7f88'], ['#4a6cf0', '#16246e']];
 let panelState = '';
 function drawPanel() {
-  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD; if (state === panelState) return; panelState = state;
+  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD + RIDE.on + LIFE.on + (S.at === BHI || (S.warp && S.warp.star === BHI)); if (state === panelState) return; panelState = state;
   const x = panelCx, T = 'rgba(70,215,230,', A = '#ffa64a';
   x.fillStyle = '#040910'; x.fillRect(0, 0, 1024, 512); x.textBaseline = 'middle'; x.lineWidth = 2;
   x.strokeStyle = T + '.55)'; x.strokeRect(14, 14, 996, 484);
-  x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(40, 84); x.lineTo(984, 84); x.moveTo(40, 312); x.lineTo(984, 312); x.stroke();
+  x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(40, 84); x.lineTo(984, 84); x.moveTo(40, 299); x.lineTo(984, 299); x.stroke();
   const sp = v => { try { x.letterSpacing = v; } catch (e) {} };
   x.textAlign = 'left'; x.fillStyle = T + '.95)'; x.font = '300 30px ' + FONT; sp('0.34em'); x.fillText('OBSERVATION DECK', 40, 50);
   x.textAlign = 'right'; x.fillStyle = A; x.font = '500 15px ' + FONT; sp('0.2em'); x.fillText((WORLD ? WORLDS[WORLD].name : PLACE).toUpperCase(), 984, 110); x.textAlign = 'left';
@@ -1253,7 +1257,7 @@ function drawPanel() {
     x.beginPath(); x.roundRect(644, 26, 340, 46, 12); x.fill(); x.stroke();
     x.textAlign = 'center'; x.fillStyle = ev ? A : T + '.95)'; x.font = '500 16px ' + FONT; sp('0.12em');
     x.fillText(ev ? '●  ' + EVENT_NAMES[ev.type] + '   ·   ' + ev.look.toUpperCase() : 'SCAN THE SKY', 814, 50); x.textAlign = 'left'; }
-  x.textAlign = 'left'; x.fillStyle = T + '.5)'; x.font = '500 15px ' + FONT; x.fillText('CALL THE SUN, A PLANET, A VISITOR OR THE WHOLE SYSTEM', 40, 110); x.fillText('CONTROLS', 40, 338);
+  x.textAlign = 'left'; x.fillStyle = T + '.5)'; x.font = '500 15px ' + FONT; x.fillText('CALL THE SUN, A PLANET, A VISITOR OR THE WHOLE SYSTEM', 40, 110);
   { const cx = 52, cy = 196, on = G.i === SUN, g = x.createRadialGradient(cx, cy, 6, cx, cy, 40);                       // the Sun
     g.addColorStop(0, '#fff3c4'); g.addColorStop(0.55, '#ffb43c'); g.addColorStop(0.8, 'rgba(255,120,20,.55)'); g.addColorStop(1, 'rgba(255,120,20,0)');
     x.fillStyle = g; x.beginPath(); x.arc(cx, cy, 40, 0, Math.PI * 2); x.fill();
@@ -1291,11 +1295,11 @@ function drawPanel() {
     x.fillStyle = '#ffd98a'; x.beginPath(); x.arc(cx, cy, 8, 0, Math.PI * 2); x.fill();
     x.fillStyle = on ? A : T + '.9)'; for (const [dx, dy] of [[18, -6], [-31, 8], [41, 12]]) { x.beginPath(); x.arc(cx + dx, cy + dy, 3.5, 0, Math.PI * 2); x.fill(); }
     x.textAlign = 'center'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('SOL SYSTEM', cx, 274); }
-  PILLS.forEach(([id, label], i) => { const px = 40 + i * PILL_STEP, pw = PILL_STEP - 7, on = S.sheet === id || (id === 'back' && G.i >= 0) || (id === 'sound' && Snd.muted);
-    if (id === 'ground') label = S.groundT ? 'TO SPACE' : WORLD ? 'LAND' : 'TO LAKE'; if (id === 'sound') label = Snd.muted ? 'SOUND OFF' : 'SOUND ON';
+  PILLS.forEach(([id, label], i) => { const [px, py, pw, ph] = pillRect(i), on = S.sheet === id || (id === 'back' && G.i >= 0) || (id === 'sound' && Snd.muted) || (id === 'hole' && (S.at === BHI || (S.warp && S.warp.star === BHI)));
+    if (id === 'ground') label = S.groundT ? 'TO SPACE' : WORLD ? 'LAND' : 'TO LAKE'; if (id === 'sound') label = Snd.muted ? 'MUTED' : 'SOUND';
     x.lineWidth = 2; x.strokeStyle = on ? A : T + '.6)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.06)';
-    x.beginPath(); x.roundRect(px, 364, pw, 72, 14); x.fill(); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 11.5px ' + FONT; sp('0.03em'); x.fillText(label, px + pw / 2, 401); });
+    x.beginPath(); x.roundRect(px, py, pw, ph, 13); x.fill(); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 13px ' + FONT; sp('0.05em'); x.fillText(label, px + pw / 2, py + ph / 2 + 1); });
   { const m = MISSIONS.findIndex((_, i) => !LOG.done.includes(i)); x.textAlign = 'left'; x.font = '500 15px ' + FONT; sp('0.08em');              // what to try next
     x.fillStyle = A; x.fillText(m < 0 ? 'ALL MISSIONS COMPLETE' : 'MISSION ' + (LOG.done.length + 1) + ' OF ' + MISSIONS.length, 40, 470);
     if (m >= 0) { x.fillStyle = '#e6f2ff'; x.font = '400 16px ' + FONT; sp('0.03em'); x.fillText(MISSIONS[m].t, 230, 470); } }
@@ -1310,7 +1314,7 @@ function panelHit(o, d) {         // where does a ray meet the console? returns 
 function panelButton(uv) { const px = uv[0] * 1024, py = uv[1] * 512;
   if (px > 636 && py < 80) return 'scan';
   if (py > 140 && py < 290) { if (px < 93) return SUN; if (px > 876) return SYS; if (px > 798) return ISS; if (px > 726) return COMET; if (px > 654) return MOON; const i = Math.round((px - 128) / 70); if (i >= 0 && i < PLANETS.length) return i; }
-  if (py > 360 && py < 440) for (let i = 0; i < PILLS.length; i++) if (px > 40 + i * PILL_STEP && px < 33 + (i + 1) * PILL_STEP) return PILLS[i][0];
+  for (let i = 0; i < PILLS.length; i++) { const r = pillRect(i); if (px > r[0] && px < r[0] + r[2] && py > r[1] && py < r[1] + r[3]) return PILLS[i][0]; }
   return null; }
 function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return; blip();
   if (b === 'scan') startEvent();
@@ -1319,7 +1323,7 @@ function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return
   else if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], skyDirOf(b), b === SUN ? 0.26 : b === ISS ? 0.3 : b === COMET ? 0.13 : 0.2, eye); }
   else if (b === 'smaller' || b === 'larger') { if (G.i >= 0 && !G.anim) G.radT = Math.max(0.04, Math.min(2.5, (G.radT || G.rad) * (b === 'larger' ? 1.45 : 1 / 1.45))); }
   else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround();
-  else if (b === 'sound') toggleMute(); else if (SHEETS.includes(b)) S.sheet = S.sheet === b ? '' : b; else { backToNow(); goHome(); } }
+  else if (b === 'sound') toggleMute(); else if (b === 'hole') goHole(); else if (b === 'life') { if (!LIFE.on) startLife(); S.sheet = 'life'; } else if (b === 'ride') { if (!RIDE.on) startRide(); S.sheet = 'ride'; } else if (SHEETS.includes(b)) S.sheet = S.sheet === b ? '' : b; else { backToNow(); goHome(); } }
 
 // ───────────── Help sheet, fact sheet and small floating tags ─────────────
 function board(c, w, h) {         // an upright sheet at c (height above the floor), turned to face the middle of the deck
@@ -1365,18 +1369,22 @@ function drawDeep() {
 }
 function deepRow(o, d) {          // what on the left-hand sheet does this ray touch? a row of the deep-sky list, -2 for the logbook's reset button, -1 for nothing
   SHEET = inside() ? SHEET_IN : SHEET_OUT;
-  if (S.sheet !== 'deep' && S.sheet !== 'log' && S.sheet !== 'worlds' && S.sheet !== 'time' && S.sheet !== 'bh' && S.sheet !== 'iss') return -1;
+  if (S.sheet === 'ride' || S.sheet === 'life') {}
+  else if (S.sheet !== 'deep' && S.sheet !== 'log' && S.sheet !== 'worlds' && S.sheet !== 'time' && S.sheet !== 'bh' && S.sheet !== 'iss') return -1;
   const c = [SHEET.c[0], SHEET.c[1] + S.floorY, SHEET.c[2]], n = norm([-c[0], 0, -c[2]]), r = norm(cross([0, 1, 0], n)), dn = dot(d, n); if (Math.abs(dn) < 1e-5) return -1;
   const t = dot(add3(c, o, -1), n) / dn; if (t <= 0 || t > 8) return -1;
   const q = add3(add3(o, d, t), c, -1), u = dot(q, r) / SHEET.w + 0.5, v = 0.5 - q[1] / SHEET.h; if (u < 0 || u > 1 || v < 0 || v > 1) return -1;
   if (S.sheet === 'log') return u * 1024 > 716 && v * 800 > 28 && v * 800 < 88 ? -2 : -1;
+  if (S.sheet === 'life') { const X = u * 1024, Y = v * 800; if (Y > 78 && Y < 132) return 600 + Math.min(2, Math.max(0, Math.floor((X - 30) / 325)));
+    if (Y > 492 && Y < 536) return 610; const r = Math.floor((Y - 546) / 36), k = (X < 512 ? 0 : 6) + r; return r >= 0 && r < 6 && k < LIFE_STARS[LIFE.star].marks.length ? 620 + k : -1; }
+  if (S.sheet === 'ride') { if (v * 800 > 236 && v * 800 < 286) return 500; const r = Math.floor((v * 800 - 297) / 43); return r >= 0 && r < RIDE_MARKS.length ? 501 + r : -1; }
   if (S.sheet === 'iss') { const r = Math.floor((v * 800 - 137) / 50); return r >= 0 && r < ROOMS.length ? 400 + r : -1; }
   if (S.sheet === 'bh') { const r = Math.floor((v * 800 - 313) / 64); return !BH.cross && r >= 0 && r < BH_MARKS.length ? 300 + r : -1; }
   if (S.sheet === 'time') { const r = Math.floor((v * 800 - 299) / 46); return r >= 0 && r < MARKS.length ? 200 + r : -1; }
   if (S.sheet === 'worlds') { const r = Math.floor((v * 800 - 100) / 128); return r >= 0 && r < WORLDS.length && (v * 800 - 100) % 128 < 114 ? 100 + r : -1; }
   const row = Math.floor((v * 800 - 99) / 36); return row >= 0 && row <= DSO.length ? row : -1;
 }
-function deepPress(row) { blip(); if (row === -2) return resetLog(); if (row >= 400) return goRoom(row - 400); if (row >= 300) { const d = BH_MARKS[row - 300][0]; if (d === 1) { BH.cross = 0.001; whoosh(3); } else BH.DT = d; return; } if (row >= 200) { S.deepT = MARKS[row - 200][0]; return; } if (row >= 100) return setWorld(row - 100); if (S.at !== DSO0 + row) warpTo(DSO0 + row); }
+function deepPress(row) { blip(); if (row === -2) return resetLog(); if (row >= 600) return lifePress(row); if (row === 500) { if (!RIDE.play && RIDE.s >= RIDE.S1 - 0.01) RIDE.s = RIDE.sT = RIDE.S0; RIDE.play = !RIDE.play; return; } if (row > 500) { RIDE.play = false; RIDE.sT = RIDE_MARKS[row - 501][0]; return; } if (row >= 400) return goRoom(row - 400); if (row >= 300) { const d = BH_MARKS[row - 300][0]; if (d === 1) { BH.cross = 0.001; whoosh(3); } else BH.DT = d; return; } if (row >= 200) { S.deepT = MARKS[row - 200][0]; return; } if (row >= 100) return setWorld(row - 100); if (S.at !== DSO0 + row) warpTo(DSO0 + row); }
 
 // what there is to know about the thing in front of you
 const FACTS = [
@@ -1450,7 +1458,9 @@ const TAGS = ['MERCURY', 'VENUS', 'EARTH', 'MARS', 'JUPITER', 'SATURN', 'URANUS'
   'press', 'travel there', 'bring it here', 'hold to grab', 'zoom in', 'tap: zoom in   ·   hold: move the model', 'bring up Earth',
   'FIREBALL', 'METEOR SHOWER', 'AURORA', 'SUPERNOVA', 'look north', 'look north-east', 'look east', 'look south-east', 'look south', 'look south-west', 'look west', 'look north-west', 'look overhead',
   'a simulation: this has not happened', 'MISSION COMPLETE',
-  'MOON', 'PHOBOS', 'DEIMOS', 'IO', 'EUROPA', 'GANYMEDE', 'CALLISTO', 'RHEA', 'TITAN', 'TITANIA', 'OBERON', 'TRITON', 'COMET', 'ISS', 'SPACE STATION PASSING', 'tap: look at it alone   ·   hold: move the station', ...ISSP.map(P => P.tag)], tagW = [];
+  'MOON', 'PHOBOS', 'DEIMOS', 'IO', 'EUROPA', 'GANYMEDE', 'CALLISTO', 'RHEA', 'TITAN', 'TITANIA', 'OBERON', 'TRITON', 'COMET', 'ISS', 'SPACE STATION PASSING', 'tap: look at it alone   ·   hold: move the station', ...ISSP.map(P => P.tag),
+  'VOYAGER 1', 'KUIPER BELT', 'OORT CLOUD', 'ALPHA CENTAURI', 'SIRIUS', 'VEGA', 'ARCTURUS', 'YOU ARE HERE', 'MILKY WAY', 'ANDROMEDA', 'TRIANGULUM', 'MAGELLANIC CLOUDS', 'VIRGO CLUSTER', 'FORNAX CLUSTER', 'GREAT ATTRACTOR', 'PERSEUS CLUSTER', 'COMA CLUSTER', 'SHAPLEY SUPERCLUSTER',
+  'ORBIT OF MERCURY', 'ORBIT OF VENUS', 'ORBIT OF THE EARTH', 'ORBIT OF MARS', 'ORBIT OF JUPITER', 'THE SUN TODAY, SAME SCALE', 'THE EARTH, SAME SCALE'], tagW = [];
 const H_PRESS = 10, H_TRAVEL = 11, H_BRING = 12, H_GRAB = 13, H_ZOOM = 14, H_SUN = 15, H_EARTH = 16;
 let tagTex; { const cv = document.createElement('canvas'); cv.width = 1024; cv.height = TAGS.length * 48; const x = cv.getContext('2d'); x.fillStyle = '#fff'; x.textBaseline = 'middle';
   TAGS.forEach((t, i) => { x.font = (i < 10 ? '500 30px ' : '400 30px ') + FONT; spc(x, i < 10 ? '0.2em' : '0.06em'); x.fillText(t, 4, i * 48 + 25); tagW[i] = Math.ceil(x.measureText(t).width) + 8; });
@@ -1483,6 +1493,8 @@ function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text h
       const t = [c[0], c[1] + Math.min(P.big && p !== G.part ? 0.05 : P.r * x.sc, p === G.part ? 0.9 : 0.16) * G.rad + h, c[2]], to = add3(S.head, t, -1), dl = Math.hypot(to[0], to[1], to[2]) || 1;
       list.push({ p: add3(t, to, Math.min(0.45 * G.rad, dl * 0.4) / dl), k: TAGS.indexOf(P.tag), h }); }); }          // (brought a little towards you, so the part in front does not hide its neighbour's name)
   if (inside()) for (const r of inNext()) { const m = inMark(r), h = Math.max(0.06, dist3(m, S.head) * 0.03); list.push({ p: [m[0], m[1] + h, m[2]], k: TAGS.indexOf(ISS_INFO[ROOMS[r].id][0]), h }, { p: [m[0], m[1] - h * 0.3, m[2]], k: H_TRAVEL, h: h * 0.5 }); }   // the rooms next door are named in their hatches
+  if (RIDE.on) for (const [t, where, a, b] of RIDE_TAGS) if (RIDE.s > a && RIDE.s < b) { const d = norm(applySky(S.sky, where())); list.push({ p: add3(add3(S.head, d, 30), [0, -0.75, 0]), k: TAGS.indexOf(t), h: 0.5 }); }   // names along the ride
+  if (LIFE.on && LIFE.v) for (const g of LIFE.v.rings) if (g.tag) list.push({ p: g.tp, k: TAGS.indexOf(g.tag), h: 0.2 });      // what the model star is measured against
   if (S.time < missionUntil) list.push({ p: [0, S.floorY + 1.235, -0.86], k: TAGS.indexOf('MISSION COMPLETE'), h: 0.04 });
   if (MOONS[G.i] && !G.anim && G.tex) { const h = Math.max(0.011, 0.085 * G.rad); for (const m of moonsOf(G)) list.push({ p: [m.p[0], m.p[1] + m.r + h * 0.9, m.p[2]], k: TAGS.indexOf(m.name), h }); }
   if (G.i === SYS && !G.anim) { const h = Math.max(0.022, 0.034 * G.rad);
@@ -1859,6 +1871,340 @@ function drawWorlds() {
   gl.bindTexture(gl.TEXTURE_2D, worldSheetTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, worldCv); gl.generateMipmap(gl.TEXTURE_2D);
 }
 
+// ───────────── The scale of things: one unbroken pull-back from the Earth to the web of galaxies ─────────────
+// You leave straight up out of the plane of the Milky Way, looking back at where you came from. Every distance on the way is the real one.
+const AU_M = 1.495978707e11, PC_M = 3.0857e16, LY_M = 9.4607e15;
+const RIDE = { on: false, s: 7.3, sT: 7.3, play: false, S0: 7.3, S1: 24.9, M: null, n: eq(192.85948, 27.12825), g: null };      // s: log10 of your distance from the Earth in metres
+{ const g0 = eq(266.40499, -28.93617); RIDE.g = norm(add3(g0, RIDE.n, -dot(g0, RIDE.n)));                      // n: the galaxy's north pole; g: towards its centre
+  const el = 3 * D, X = [1, 0, 0], F = [0, Math.sin(el), -Math.cos(el)], T = [0, Math.cos(el), Math.sin(el)], a1 = RIDE.g, a2 = RIDE.n.map(x => -x), a3 = cross(a1, a2);   // home lies straight ahead, just above the rail
+  RIDE.M = new Float32Array(9); for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++) RIDE.M[c * 3 + r] = X[r] * a1[c] + F[r] * a2[c] + T[r] * a3[c]; }
+const cloud = program(`
+  in vec3 aPos; in vec4 aC; uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uRel; uniform float uUnit, uPx, uAmt, uMin; out vec3 vCol;       // aC: colour, and size in the cloud's own unit (or, if negative, a fixed size in pixels)
+  void main(){ vec3 rel = aPos*uUnit+uRel; float dist = max(length(rel), 1e-12), ps = aC.a < 0. ? -aC.a*uPx : aC.a*uUnit/dist*520.*uPx;
+    gl_Position = uPV*vec4(uSky*(rel/dist)*90., 1.); gl_PointSize = clamp(ps, uMin, 80.*uPx);
+    vCol = aC.rgb*uAmt*clamp(ps*ps/(uMin*uMin), .22, 1.); }`, `
+  in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*3.)*(1.-r2), 1.); }`);
+const rideSets = (() => { let seed = 2026; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const gs = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(6.2831853 * rnd()), n = RIDE.n, g = RIDE.g, q = cross(n, g), ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D);
+  const set = (v, unit) => { const o = vao(cloud, new Float32Array(v), [['aPos', 3], ['aC', 4]]); o.n = v.length / 7; o.unit = unit; return o; }, ecl = (x, y, z) => [x, y * ce - z * se, y * se + z * ce];
+  const kb = []; for (let i = 0; i < 2500; i++) { const r = 30 + 20 * Math.pow(rnd(), 0.7), a = rnd() * 6.2831853; kb.push(...ecl(r * Math.cos(a), r * Math.sin(a), r * 0.12 * gs()), .55, .62, .7, -1.6); }       // the Kuiper belt: icy bodies beyond Neptune
+  const oort = []; for (let i = 0; i < 9000; i++) { const r = 2000 * Math.pow(50, Math.pow(rnd(), 0.8)), z = rnd() * 2 - 1, a = rnd() * 6.2831853, s2 = Math.sqrt(1 - z * z), fl = r < 12000 ? 0.45 : 1;                      // the Oort cloud: a flattened inner part, a round outer shell
+    oort.push(r * s2 * Math.cos(a), r * s2 * Math.sin(a) * fl, r * z * fl, .5, .62, .78, -1.5); }
+  const mw = [], P = (X, Y, Z) => [g[0] * (8200 + X) + q[0] * Y + n[0] * Z, g[1] * (8200 + X) + q[1] * Y + n[1] * Z, g[2] * (8200 + X) + q[2] * Y + n[2] * Z];     // (X, Y: in the disc, measured from the galaxy's centre; the Sun sits at X = -8200 parsecs)
+  for (let i = 0; i < 70000; i++) { const u = rnd(); let X, Y, Z, c, sz;
+    if (u < 0.13) { const r = 700 * Math.abs(gs()) + 100, a = rnd() * 6.2831853; X = r * Math.cos(a) * 1.5; Y = r * Math.sin(a) * 0.8; Z = 380 * gs(); const t = X * Math.cos(0.5) - Y * Math.sin(0.5); Y = X * Math.sin(0.5) + Y * Math.cos(0.5); X = t; c = [1, .84, .58]; sz = 260; }    // the bulge and its bar
+    else { const r = Math.min(17000, 1500 - 3600 * Math.log(1 - rnd() * 0.985)), arm = u < 0.72; let a = rnd() * 6.2831853;
+      if (arm) { const k = Math.floor(rnd() * 4); a = Math.log(r / 3000) / 0.2309 + k * Math.PI / 2 - 0.071 + gs() * (k % 2 ? 0.2 : 0.13); }                                 // four arms wound at 13 degrees; the Sun lies between two of them
+      X = r * Math.cos(a); Y = r * Math.sin(a); Z = (arm ? 110 : 260) * gs(); const h = rnd(); c = !arm ? [.62, .5, .38] : h < 0.07 ? [1, .45, .55] : h < 0.6 ? [.62, .76, 1] : [.9, .9, 1]; sz = arm ? 170 + 150 * rnd() : 240; }
+    mw.push(...P(X, Y, Z), c[0], c[1], c[2], sz); }
+  const lg = []; for (const [ra, dec, mpc, kpc, c] of [[10.68, 41.27, 0.78, 46, [.8, .85, 1]], [23.46, 30.66, 0.86, 18, [.7, .8, 1]], [80.9, -69.8, 0.050, 9, [.9, .9, 1]], [13.2, -72.8, 0.062, 5, [.9, .9, 1]]])
+    lg.push(...eq(ra, dec).map(x => x * mpc * 1e6), c[0], c[1], c[2], kpc * 1000);                                                                                       // Andromeda, Triangulum and the two Magellanic Clouds, where they really are
+  const CL = [['VIRGO CLUSTER', 187.7, 12.4, 16.5], ['FORNAX CLUSTER', 54.6, -35.5, 19], ['GREAT ATTRACTOR', 243.6, -60.9, 68], ['PERSEUS CLUSTER', 49.95, 41.51, 74], ['COMA CLUSTER', 195.0, 27.98, 100], ['SHAPLEY SUPERCLUSTER', 201.98, -31.5, 200]]
+    .map(([t, ra, dec, mpc]) => ({ tag: t, p: eq(ra, dec).map(x => x * mpc) }));
+  const nodes = CL.map(c => c.p); while (nodes.length < 90) { const p = [rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1]; if (dot(p, p) < 1 && dot(p, p) > 0.004) nodes.push(p.map(x => x * 430)); }           // the web: knots of galaxies, joined by threads, with empty space between
+  const edges = []; nodes.forEach((a, i) => { nodes.map((b, j) => [dist3(a, b), j]).sort((x, y) => x[0] - y[0]).slice(1, 4).forEach(([dd, j]) => { if (dd < 260 && !edges.some(e => e[0] === j && e[1] === i)) edges.push([i, j]); }); });
+  const web = []; for (let i = 0; i < 52000; i++) { const u = rnd(); let p, c;
+    if (u < 0.6) { const [a, b] = edges[Math.floor(rnd() * edges.length)], t = rnd(), w = 2.2 + 3 * Math.sin(Math.PI * t); p = lerp3(nodes[a], nodes[b], t).map(x => x + gs() * w); c = [.72, .8, 1]; }
+    else if (u < 0.86) { const a = nodes[Math.floor(rnd() * nodes.length)], w = 1.2 + 2.5 * rnd(); p = a.map(x => x + gs() * w); c = [1, .88, .68]; }
+    else { p = [rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1].map(x => x * 430); c = [.8, .82, .9]; }
+    const r = Math.hypot(...p); if (r < 2.5 || r > 430) continue; const f = Math.min(1, (430 - r) / 60) * (0.55 + 0.45 * rnd()); web.push(...p, c[0] * f, c[1] * f, c[2] * f, 0.06); }
+  return { kb: set(kb, AU_M / PC_M), oort: set(oort, AU_M / PC_M), mw: set(mw, 1), lg: set(lg, 1), web: set(web, 1e6), CL, dots: null }; })();
+const rideDots = new Float32Array(10 * 7), rideDotVao = vao(cloud, rideDots, [['aPos', 3], ['aC', 4]], null, gl.DYNAMIC_DRAW);
+const circleVao = (() => { const v = []; for (let k = 0; k <= 128; k++) v.push(Math.cos(k / 128 * 6.2831853), Math.sin(k / 128 * 6.2831853), 0); return vao(orb, new Float32Array(v), [['aPos', 3]]); })();
+let trueOrbVao; { const v = [], T = centuries(Date.now()); for (const p of PLANETS) for (let k = 0; k <= 128; k++) { const el = p.el.slice(); el[3] += k / 128 * 360; v.push(...helio(el, T)); } trueOrbVao = vao(orb, new Float32Array(v), [['aPos', 3]]); }   // the planets' real orbits, in AU
+const RIDE_MARKS = [[7.3, 'The Earth', 'where the ride begins'], [8.85, 'The Moon\'s orbit', 'the farthest people have ever been'], [11.75, 'The inner planets', 'Mercury, Venus, Earth and Mars round the Sun'], [13.0, 'All eight planets', 'out to Neptune, four light-hours away'],
+  [16.3, 'The Oort cloud', 'the Sun\'s far halo of comets'], [17.3, 'The nearest stars', 'the Sun is one point among them'], [19.3, 'The Sun\'s neighbourhood', 'every star you can see by eye is in here'], [21.3, 'The Milky Way', 'a few hundred thousand million suns'],
+  [22.85, 'The Local Group', 'our galaxy, Andromeda and their companions'], [24.9, 'The web of galaxies', 'every speck is a galaxy']];
+const rideDist = m => m < 4e9 ? Math.round(m / 1000 / (m < 1e8 ? 100 : 1e4)) * (m < 1e8 ? 100 : 1e4) >= 1e6 ? (m / 1e9).toFixed(1) + ' million km' : (Math.round(m / 1e5) * 100).toLocaleString('en-GB') + ' km'
+  : m < 3e13 ? (m / 1e9 >= 1000 ? (m / 1e12).toFixed(1) + ' billion km' : Math.round(m / 1e9).toLocaleString('en-GB') + ' million km') : m < 9e15 ? Math.round(m / AU_M / 100) * 100 >= 1000 ? (Math.round(m / AU_M / 100) * 100).toLocaleString('en-GB') + ' × Earth–Sun' : Math.round(m / AU_M) + ' × Earth–Sun'
+  : (v => v >= 1e9 ? (v / 1e9).toFixed(2) + ' billion light-years' : v >= 1e6 ? (v / 1e6).toLocaleString('en-GB', { maximumSignificantDigits: 2 }) + ' million light-years' : v >= 100 ? Number(v.toPrecision(2)).toLocaleString('en-GB') + ' light-years' : v.toFixed(1) + ' light-years')(m / LY_M);
+const rideLight = m => { const t = m / 299792458; return t < 90 ? t.toFixed(1) + ' seconds' : t < 5400 ? Math.round(t / 60) + ' minutes' : t < 86400 * 2 ? (t / 3600).toFixed(1) + ' hours' : t < 86400 * 300 ? Math.round(t / 86400) + ' days'
+  : (y => y >= 1e9 ? (y / 1e9).toFixed(2) + ' billion years' : y >= 1e6 ? (y / 1e6).toLocaleString('en-GB', { maximumSignificantDigits: 2 }) + ' million years' : y >= 100 ? Number(y.toPrecision(2)).toLocaleString('en-GB') + ' years' : y.toFixed(1) + ' years')(t / 31557600); };
+function startRide() { if (RIDE.on) return; lifeOff(); WORLD = 0; S.worldNext = 0; S.groundT = 0; S.ground = 0; S.warp = null; S.at = -1; S.fspeed = 0; S.deep = S.deepT = 0; S.wf = 1; S.wfT = 0; G.grabs = [];
+  Object.assign(RIDE, { on: true, s: RIDE.S0, sT: RIDE.S0, play: false }); RIDE_SKY = RIDE.M; S.drift = 0; soundSpace(); whoosh(2); flag('ridestart'); }
+function rideOff() { if (!RIDE.on) return; RIDE.on = false; RIDE.play = false; RIDE_SKY = null; if (S.sheet === 'ride') S.sheet = ''; }
+const rideEarth = () => { const T = centuries(S.sim), E = helio(PLANETS[2].el, T), ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D); return [E[0], E[1] * ce - E[2] * se, E[1] * se + E[2] * ce]; };   // the Earth's place, in AU from the Sun
+function updateRide(dt, stickY) {
+  if (!RIDE.on) return; if (S.groundT || WORLD || S.warp) return rideOff();
+  if (!S.sheet) S.sheet = 'ride';
+  if (Math.abs(stickY) > 0.15) { RIDE.play = false; RIDE.s = RIDE.sT = Math.min(RIDE.S1, Math.max(RIDE.S0, RIDE.s - stickY * dt * 0.9)); }                       // stick forward: further out
+  else if (RIDE.play) { RIDE.s = RIDE.sT = Math.min(RIDE.S1, RIDE.s + dt * 0.21); if (RIDE.s >= RIDE.S1) RIDE.play = false; }                                  // the whole way in about a minute and a half
+  else if (RIDE.s !== RIDE.sT) { const gap = RIDE.sT - RIDE.s, st = Math.max(Math.abs(gap) * Math.min(1, dt * 1.3), 0.5 * dt); RIDE.s = st >= Math.abs(gap) ? RIDE.sT : RIDE.s + Math.sign(gap) * st; }
+  if (RIDE.s >= 24.6) flag('ride');
+  const d = Math.pow(10, RIDE.s), E = rideEarth(); RIDE.d = d; S.pos = [0, 1, 2].map(k => E[k] * AU_M / PC_M + RIDE.n[k] * d / PC_M);
+}
+const rideFade = (a, b, c, e) => { const s = RIDE.s, up = Math.min(1, Math.max(0, (s - a) / (b - a))), dn = e === undefined ? 1 : Math.min(1, Math.max(0, (e - s) / (e - c))); return up * dn; };     // a layer comes in between a and b (log metres) and goes between c and e
+function rideSun() { const E = rideEarth(); return E.map((x, k) => -x * AU_M - RIDE.n[k] * RIDE.d); }                                 // the Sun, from where you are, in metres
+function drawRideNear(PV) {       // the Earth and the Moon as globes, while they are near enough to be more than points
+  const d = RIDE.d, k = 40 / d, R = 6.371e6 * k, sky = S.sky; if (R < 0.012) return;
+  gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PV); gl.uniform3f(globe.u.uEye, 0, 0, 0); gl.uniform1f(globe.u.uEm, 0); gl.uniform1i(globe.u.uTex, 0);
+  gl.uniform1f(globe.u.uDim, 1); gl.uniform3fv(globe.u.uLight, norm(applySky(sky, rideSun()))); gl.uniform4f(globe.u.uTint, 0, 0, 0, 0); gl.uniform4f(globe.u.uRing, 0, 0, 0, 0); gl.bindVertexArray(sphereVao.v);
+  const ball = (rel, r, tex, X, Y, atm) => { if (!tex) return; const c = applySky(sky, rel).map(x => x * k), Z = cross(X, Y), [x, y, z] = [X, Y, Z].map(v => applySky(sky, v));
+    gl.uniformMatrix4fv(globe.u.uModel, false, new Float32Array([x[0] * r, x[1] * r, x[2] * r, 0, y[0] * r, y[1] * r, y[2] * r, 0, z[0] * r, z[1] * r, z[2] * r, 0, c[0], c[1], c[2], 1]));
+    gl.uniform3fv(globe.u.uAtm, atm); gl.bindTexture(gl.TEXTURE_2D, tex); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); };
+  const gst = (280.46061837 + 360.98564736629 * (S.sim / 86400000 + 2440587.5 - 2451545)) * D, home = RIDE.n.map(x => -x * d);
+  ball(home, R, worldTex(2), [Math.cos(gst), Math.sin(gst), 0], [0, 0, 1], [0.3, 0.52, 1]);
+  const md = S.moonDir, mx = md.map(x => -x), my = norm(add3([0, 0, 1], mx, -mx[2])); ball(add3(home, md, 3.844e8), 1.7374e6 * k, moonTex, mx, my, [0, 0, 0]);
+  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(stars.p);
+}
+function drawRideFar(PV, vpH) {   // everything that is drawn as light: orbits, the Sun's glow, clouds of comets, the galaxy, the galaxies
+  const d = RIDE.d, k = 40 / d, sky = S.sky, sun = rideSun(), sunL = applySky(sky, sun), camPc = S.pos, ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D);
+  const lin = (a, b, c, t, col) => { const m = [a, b, c].map(v => applySky(sky, v)); gl.uniformMatrix4fv(orb.u.uModel, false, new Float32Array([...m[0], 0, ...m[1], 0, ...m[2], 0, ...t, 1])); gl.uniform3fv(orb.u.uCol, col); };
+  gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PV);
+  { const f = rideFade(7.6, 8.2, 9.6, 10.4); if (f > 0.01) { const a = S.moonDir, b = norm(cross([0, -se, ce], a)), r = 3.844e8 * k;                                   // the Moon's orbit
+      lin(a.map(x => x * r), b.map(x => x * r), [0, 0, 0], applySky(sky, RIDE.n.map(x => -x * d)).map(x => x * k), [.30 * f, .50 * f, .56 * f]); gl.bindVertexArray(circleVao.v); gl.drawArrays(gl.LINE_STRIP, 0, 129); } }
+  { const f = rideFade(10.3, 11, 13.6, 14.3); if (f > 0.01) { const u = AU_M * k; lin([u, 0, 0], [0, u * ce, u * se], [0, -u * se, u * ce], sunL.map(x => x * k), [.16 * f, .46 * f, .52 * f]);        // the planets' orbits (ecliptic to equatorial, then to your room)
+      gl.bindVertexArray(trueOrbVao.v); for (let i = 0; i < PLANETS.length; i++) if (i < 4 ? RIDE.s < 12.9 : RIDE.s > 11.6) gl.drawArrays(gl.LINE_STRIP, i * 129, 129); } }
+  { const f = rideFade(9.5, 10.5, 15.6, 16.3), dist = Math.hypot(...sun); if (f > 0.01) { const c = sunL.map(x => x / dist * 45), n = norm(c.map(x => -x)), r = norm(cross([0, 1, 0], n)), u = cross(n, r);        // the Sun: its real size while that shows, then a glow
+      gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PV); gl.uniform3fv(coronaProg.u.uC, c); gl.uniform3fv(coronaProg.u.uR, r); gl.uniform3fv(coronaProg.u.uU, u);
+      gl.uniform1f(coronaProg.u.uRad, Math.max(45 * 6.96e8 / dist * 2.2, 0.16)); gl.uniform3f(coronaProg.u.uCol, 1, .86, .6); gl.uniform1f(coronaProg.u.uTime, S.time); gl.uniform1f(coronaProg.u.uAmt, 1.6 * f); gl.uniform1f(coronaProg.u.uInner, 0);
+      gl.bindVertexArray(coronaVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); } }
+  gl.useProgram(cloud.p); gl.uniformMatrix4fv(cloud.u.uPV, false, PV); gl.uniformMatrix3fv(cloud.u.uSky, false, sky); gl.uniform1f(cloud.u.uPx, vpH / 1000);
+  const pts = (set, rel, amt, min, count) => { if (amt < 0.01) return; gl.uniform3fv(cloud.u.uRel, rel); gl.uniform1f(cloud.u.uUnit, set.unit); gl.uniform1f(cloud.u.uAmt, amt); gl.uniform1f(cloud.u.uMin, min); gl.bindVertexArray(set.v); gl.drawArrays(gl.POINTS, 0, count || set.n); };
+  const sunPc = sun.map(x => x / PC_M), galPc = camPc.map(x => -x);
+  { const f = rideFade(10.6, 11.2, 13.9, 14.6); if (f > 0.01) { const T = centuries(S.sim); PLANETS.forEach((p, i) => { const h = helio(p.el, T); rideDots.set([h[0], h[1] * ce - h[2] * se, h[1] * se + h[2] * ce, ...(i === 2 ? [.5, .7, 1] : [1, .9, .75]), i === 2 ? -5 : -4], i * 7); });   // the planets, as dots on their orbits
+      rideDots.set([...eq(258, 12.2).map(x => x * 168), ...(RIDE.s > 12.6 ? [.6, 1, .7] : [0, 0, 0]), -4], 8 * 7);                                                                 // Voyager 1, about 168 times the Earth's distance out, heading towards Ophiuchus
+      gl.bindBuffer(gl.ARRAY_BUFFER, rideDotVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, rideDots); pts({ v: rideDotVao.v, unit: AU_M / PC_M, n: 9 }, sunPc, f, 2); } }
+  pts(rideSets.kb, sunPc, 0.5 * rideFade(12.3, 12.9, 14.3, 15), 1.5);
+  pts(rideSets.oort, sunPc, 0.6 * rideFade(13.6, 14.6, 16.9, 17.6), 1.5);
+  pts(rideSets.mw, galPc, (0.2 + 0.3 * Math.min(1, Math.max(0, (RIDE.s - 20.5) / 0.8))) * rideFade(19.2, 20.2, 22.6, 23.3), 1.6);      // (dimmer while it fills the view, or the arms burn out to white)
+  pts(rideSets.lg, galPc, 0.9 * rideFade(21.6, 22.2, 23.6, 24.2), 3);
+  pts(rideSets.web, galPc, 1.35 * rideFade(22.2, 23.2), 2.1);
+}
+const RIDE_TAGS = [                // name, where (function giving metres from you, in the sky's own axes), from and to (log metres)
+  ['EARTH', () => RIDE.n.map(x => -x * RIDE.d), 8.3, 13.6], ['MOON', () => add3(RIDE.n.map(x => -x * RIDE.d), S.moonDir, 3.844e8), 8.3, 9.8], ['SUN', () => rideSun(), 10.6, 15.4],
+  ...[0, 1, 3, 4, 5, 6, 7].map(i => [PLANETS[i].name.toUpperCase(), () => { const h = helio(PLANETS[i].el, centuries(S.sim)), ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D), s = rideSun(); return [s[0] + h[0] * AU_M, s[1] + (h[1] * ce - h[2] * se) * AU_M, s[2] + (h[1] * se + h[2] * ce) * AU_M]; }, i < 3 ? 11.1 : i < 4 ? 11.3 : 12.2, i < 4 ? 12.6 : 13.6]),
+  ['VOYAGER 1', () => add3(rideSun(), eq(258, 12.2), 168 * AU_M), 12.9, 14.4], ['KUIPER BELT', () => add3(rideSun(), RIDE.g, 44 * AU_M), 13.0, 14.3], ['OORT CLOUD', () => add3(rideSun(), RIDE.g, 4e4 * AU_M), 14.9, 16.8],
+  ...[['ALPHA CENTAURI', 'Rigil Kentaurus'], ['SIRIUS', 'Sirius'], ['VEGA', 'Vega'], ['ARCTURUS', 'Arcturus']].map(([t, nm]) => { const i = PICK.findIndex(p => p[3] === nm); return [t, () => add3(pickPos[i], S.pos, -1).map(x => x * PC_M), 16.4, 18.2]; }),
+  ['YOU ARE HERE', () => S.pos.map(x => -x * PC_M), 19.8, 22.3], ['MILKY WAY', () => add3(RIDE.g.map(x => x * 8200), S.pos, -1).map(x => x * PC_M), 22.3, 25],
+  ['ANDROMEDA', () => add3(eq(10.68, 41.27).map(x => x * 0.78e6), S.pos, -1).map(x => x * PC_M), 21.9, 23.8], ['TRIANGULUM', () => add3(eq(23.46, 30.66).map(x => x * 0.86e6), S.pos, -1).map(x => x * PC_M), 22.2, 23.6],
+  ['MAGELLANIC CLOUDS', () => add3(eq(60, -72).map(x => x * 0.055e6), S.pos, -1).map(x => x * PC_M), 21.2, 22.4],
+  ...rideSets.CL.map((c, i) => [c.tag, () => add3(c.p.map(x => x * 1e6), S.pos, -1).map(x => x * PC_M), i < 2 ? 23.3 : i < 5 ? 23.9 : 24.3, i < 2 ? 24.4 : 25])];
+const rideCv = document.createElement('canvas'); rideCv.width = 1024; rideCv.height = 800;
+const rideTex = textTexture(rideCv); let rideKey = null, rideNext = 0;
+function drawRideSheet() {
+  const key = RIDE.s.toFixed(3) + RIDE.play; if (key === rideKey || S.time < rideNext) return; rideKey = key; rideNext = S.time + 0.15;
+  const x = rideCv.getContext('2d'), T = 'rgba(70,215,230,', A = '#ffa64a', d = Math.pow(10, RIDE.s); sheetBase(x, 1024, 800);
+  x.fillStyle = T + '.95)'; x.font = '300 34px ' + FONT; spc(x, '0.3em'); x.fillText('THE SCALE OF THINGS', 44, 58);
+  x.textAlign = 'right'; x.fillStyle = T + '.5)'; x.font = '400 17px ' + FONT; spc(x, '0.08em'); x.fillText('stick forward: further out   ·   back: closer', 980, 58); x.textAlign = 'left';
+  x.fillStyle = '#e6f2ff'; x.font = '300 50px ' + FONT; spc(x, '0.03em'); x.fillText(rideDist(d), 44, 126);
+  x.fillStyle = T + '.7)'; x.font = '400 22px ' + FONT; x.fillText('from the Earth, which is straight ahead of you', 46, 172); x.fillStyle = A; x.fillText('Light takes ' + rideLight(d) + ' to come this far', 46, 208);
+  x.lineWidth = 2; x.strokeStyle = A; x.fillStyle = 'rgba(255,166,74,.10)'; x.fillRect(30, 236, 964, 50); x.strokeRect(30, 236, 964, 50);
+  x.fillStyle = A; x.font = '400 23px ' + FONT; spc(x, '0.1em'); x.fillText(RIDE.play ? 'PAUSE' : RIDE.s >= RIDE.S1 - 0.01 ? 'RIDE AGAIN FROM THE EARTH' : 'RIDE OUT FROM HERE, ALL THE WAY', 60, 262);
+  RIDE_MARKS.forEach(([s, t, sub], i) => { const y = 318 + i * 43, here = Math.abs(RIDE.s - s) < 0.12;
+    if (i % 2 === 0) { x.fillStyle = T + '.05)'; x.fillRect(30, y - 21, 964, 43); }
+    x.fillStyle = here ? A : '#e6f2ff'; x.font = '400 22px ' + FONT; spc(x, '0.03em'); x.fillText(t, 60, y);
+    x.fillStyle = T + '.6)'; x.font = '400 18px ' + FONT; x.fillText(sub, 340, y); x.textAlign = 'right'; x.fillStyle = T + '.7)'; x.fillText(rideDist(Math.pow(10, s)), 976, y); x.textAlign = 'left'; });
+  x.fillStyle = T + '.45)'; x.font = '400 17px ' + FONT; spc(x, '0.06em');
+  x.fillText('Every distance is real. The arms of the Milky Way are a sketch: nobody has seen it from outside. Beyond', 44, 748); x.fillText('the Local Group only the named clusters are in their true places; the rest follows the look of the real web.', 44, 772);
+  gl.bindTexture(gl.TEXTURE_2D, rideTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, rideCv); gl.generateMipmap(gl.TEXTURE_2D);
+}
+
+// ───────────── The life of a star: a model star beyond the rail, from its cloud to whatever is left of it ─────────────
+// A stage: n name, row its name in the list, len seconds it is shown for, vis what is drawn, lasts how long it really takes, txt what happens,
+// k: points along it [how far through, age in years, width (Sun today = 1), surface in kelvin, mass (Sun = 1)]; brightness follows from width and temperature.
+const LIFE = { on: false, star: 1, s: 0, sT: 0, play: false, flash: 0, v: null, c: [0, 3.9, -7] };
+const LIFE_STARS = [
+  { name: 'A RED DWARF', sub: 'a fifth of the Sun\'s mass', stages: [
+    { n: 'A COLD CLOUD', row: 'A cold cloud', len: 6, vis: 'cloud', lasts: 'a few hundred thousand years', k: [[0, 0, 0, 10, 0.2], [1, 2e5, 0, 10, 0.2]],
+      txt: 'A small clump inside a far bigger cloud of gas and dust falls in on itself. Most stars start small: about three in four of the stars in the Milky Way are red dwarfs, and not one of them can be seen by eye.' },
+    { n: 'PROTOSTAR', row: 'Protostar', len: 7, vis: 'proto', logAge: 1, lasts: 'about 300 million years', k: [[0, 2e5, 1.5, 3100, 0.2], [1, 3e8, 0.22, 3300, 0.2]],
+      txt: 'The centre glows because it is being squeezed, not yet because of fusion. A small star takes its time: it shrinks for hundreds of millions of years before its core is hot enough to fuse hydrogen.' },
+    { n: 'MAIN SEQUENCE: A RED DWARF', row: 'Red dwarf', len: 14, vis: 'star', mark: 0.5, extra: [[0.0135, 'The universe today']], lasts: 'about a trillion years', k: [[0, 3e8, 0.22, 3300, 0.2], [1, 1e12, 0.24, 3600, 0.2]],
+      txt: 'Dim, cool and thrifty. It shines with a two-hundredth of the Sun\'s light and stirs itself right through, so it can burn nearly all of its hydrogen. Every red dwarf ever born is still shining: the universe is 13.8 billion years old.' },
+    { n: 'A BLUE DWARF (PREDICTED)', row: 'Blue dwarf', len: 8, vis: 'star', lasts: 'some billions of years', k: [[0, 1e12, 0.24, 3600, 0.2], [1, 1.005e12, 0.25, 6500, 0.2]],
+      txt: 'Too small ever to swell into a red giant. Calculations say that as the fuel runs low it grows hotter and brighter instead: a "blue dwarf". Nobody has seen one, and nobody will for a long time: the universe is 70 times too young.' },
+    { n: 'HELIUM WHITE DWARF', row: 'White dwarf', len: 8, vis: 'wd', logAge: 1, lasts: 'trillions of years, cooling', k: [[0, 1.005e12, 0.25, 6500, 0.2], [0.15, 1.006e12, 0.02, 20000, 0.2], [1, 1e13, 0.02, 1500, 0.2]],
+      txt: 'No giant, no nebula, no explosion. Fusion simply stops and the star shrinks into a white dwarf made of helium, about twice as wide as the Earth. From here on it only cools.' },
+    { n: 'BLACK DWARF', row: 'Black dwarf', len: 5, vis: 'dark', logAge: 1, lasts: 'for ever', k: [[0, 1e13, 0.02, 1500, 0.2], [1, 1e15, 0.02, 40, 0.2]],
+      txt: 'In the end: a cold, dark ball. This is where every small star is heading, but none has arrived, or will for a very long time.' }] },
+  { name: 'THE SUN', sub: 'our own star', stages: [
+    { n: 'A COLD CLOUD', row: 'A cold cloud', len: 7, vis: 'cloud', lasts: 'about 100,000 years', k: [[0, 0, 0, 10, 1], [1, 1e5, 0, 10, 1]],
+      txt: 'A cold, dark clump inside a far bigger cloud of gas and dust. A nudge, perhaps the blast of a star dying nearby, and gravity wins: the clump falls in on itself, and its slow turning flattens it into a disc.' },
+    { n: 'PROTOSTAR', row: 'Protostar', len: 8, vis: 'proto', logAge: 1, lasts: 'about 50 million years', k: [[0, 1e5, 5, 4000, 1], [0.3, 1e6, 2.6, 4300, 1], [0.7, 1e7, 1.3, 4500, 1], [1, 5e7, 0.89, 5620, 1]],
+      txt: 'The centre heats up as it is squeezed and starts to glow, but it is not yet a true star: it shines only because it is shrinking. Jets shoot from its poles, and in the disc around it the planets gather.' },
+    { n: 'MAIN SEQUENCE', row: 'Main sequence', len: 13, vis: 'star', mark: 0.04, extra: [[0.46, 'The Sun today']], lasts: 'about 10 billion years', k: [[0, 5e7, 0.89, 5620, 1], [0.46, 4.6e9, 1, 5772, 1], [1, 1e10, 1.4, 5750, 1]],
+      txt: 'At 15 million degrees the core begins to fuse hydrogen into helium, and the star settles down. This is the long, steady middle of its life, nine tenths of it. The Sun is about halfway through.' },
+    { n: 'SUBGIANT', row: 'Subgiant', len: 5, vis: 'star', lasts: 'about 1.5 billion years', k: [[0, 1e10, 1.4, 5750, 1], [1, 1.16e10, 2.3, 4900, 1]],
+      txt: 'The hydrogen in the core is used up. The core shrinks and heats, fusion moves out into a shell around it, and the outer layers begin to swell and cool.' },
+    { n: 'RED GIANT', row: 'Red giant', len: 9, vis: 'star', mark: 0.97, lasts: 'about 600 million years', k: [[0, 1.16e10, 2.3, 4900, 1], [0.35, 1.19e10, 5, 4700, 0.99], [0.7, 1.215e10, 40, 3900, 0.9], [1, 1.22e10, 200, 3100, 0.72]],
+      txt: 'The star swells to about 200 times its width and shines thousands of times brighter. Mercury and Venus are swallowed. The orbits are drawn where they are today: they will widen as the Sun loses mass, and whether the Earth escapes is not settled.' },
+    { n: 'HELIUM BURNING', row: 'Helium burning', len: 6, vis: 'star', mark: 0.6, lasts: 'about 100 million years', k: [[0, 1.22e10, 200, 3100, 0.72], [0.2, 1.2201e10, 11, 4700, 0.72], [1, 1.231e10, 13, 4600, 0.71]],
+      txt: 'The core reaches 100 million degrees and its helium ignites all at once: the helium flash. Nothing of it shows outside. The star shrinks to a tenth of its giant size and quietly fuses helium into carbon and oxygen.' },
+    { n: 'SECOND RED GIANT', row: 'Second red giant', len: 7, vis: 'star', pulse: 1, mark: 0.95, lasts: 'about 20 million years', k: [[0, 1.231e10, 13, 4600, 0.71], [1, 1.233e10, 180, 3000, 0.56]],
+      txt: 'The helium in the core runs out too. The star swells again, pulses, and blows its outer layers away in a thick wind: nearly half its mass goes back into space, carrying carbon the star has made.' },
+    { n: 'PLANETARY NEBULA', row: 'Planetary nebula', len: 12, vis: 'pn', lasts: 'about 20,000 years', k: [[0, 1.233e10, 180, 3000, 0.56], [0.08, 1.233e10, 2, 30000, 0.55], [0.5, 1.23301e10, 0.18, 100000, 0.54], [1, 1.23302e10, 0.02, 110000, 0.54]],
+      clock: p => 'Age 12.33 billion years   ·   the nebula is ' + (Math.round(p * 20) * 1000).toLocaleString('en-GB') + ' years old',
+      txt: 'What is left is the bare core, hotter than 100,000 degrees. Its ultraviolet light makes the cast-off gas glow: a planetary nebula (nothing to do with planets; the name is 250 years old). Not to scale: the real one grows to about a light-year.' },
+    { n: 'WHITE DWARF', row: 'White dwarf', len: 8, vis: 'wd', shell: 1, logAge: 1, mark: 0.4, lasts: 'trillions of years, cooling', k: [[0, 1.23302e10, 0.02, 110000, 0.54], [0.15, 1.24e10, 0.013, 30000, 0.54], [0.5, 2.2e10, 0.013, 5500, 0.54], [1, 1e12, 0.013, 1100, 0.54]],
+      txt: 'The core is left alone: a white dwarf, half the Sun\'s mass packed into a ball about the size of the Earth. A teaspoon of it would weigh tonnes. It makes no more energy. It only cools, for longer than the universe has existed so far.' },
+    { n: 'BLACK DWARF', row: 'Black dwarf', len: 5, vis: 'dark', logAge: 1, lasts: 'for ever', k: [[0, 1e12, 0.013, 1100, 0.54], [1, 1e15, 0.013, 40, 0.54]],
+      txt: 'In the end: a cold, dark ball of crystallised carbon and oxygen. None exists yet. The universe is far too young for even the oldest white dwarf to have cooled this far.' }] },
+  { name: 'A HEAVY STAR', sub: 'twenty times the Sun\'s mass', stages: [
+    { n: 'A COLD CLOUD', row: 'A cold cloud', len: 6, vis: 'cloud', lasts: 'tens of thousands of years', k: [[0, 0, 0, 10, 20], [1, 5e4, 0, 10, 20]],
+      txt: 'A massive clump of a giant gas cloud collapses. It pulls in twenty times the material the Sun did, and far faster.' },
+    { n: 'PROTOSTAR', row: 'Protostar', len: 6, vis: 'proto', lasts: 'about 100,000 years', k: [[0, 5e4, 10, 8000, 20], [1, 1.5e5, 5.8, 35000, 20]],
+      txt: 'The heavier the star, the quicker everything goes. Fusion starts while gas is still falling in, and the young star\'s fierce light soon blows the rest of its cloud away.' },
+    { n: 'MAIN SEQUENCE: A BLUE STAR', row: 'Blue star', len: 10, vis: 'star', lasts: 'about 8 million years', k: [[0, 1.5e5, 5.8, 35000, 20], [1, 8e6, 13, 28000, 19]],
+      txt: 'A blue star some 50,000 times brighter than the Sun. It has twenty times the fuel but burns it thousands of times faster, so it lives fast: eight million years, where the Sun gets ten billion.' },
+    { n: 'RED SUPERGIANT', row: 'Red supergiant', len: 10, vis: 'star', pulse: 1, mark: 0.8, lasts: 'about 900,000 years', k: [[0, 8e6, 13, 28000, 19], [0.25, 8.05e6, 600, 3900, 18.5], [1, 8.9e6, 900, 3600, 15]],
+      txt: 'Out of hydrogen in its core, it swells into a red supergiant, like Betelgeuse in Orion. Put where the Sun is, it would reach most of the way to Jupiter. Inside, helium is fusing into carbon and oxygen.' },
+    { n: 'THE LAST YEARS', row: 'The last years', len: 6, vis: 'star', pulse: 1, lasts: 'about a thousand years', k: [[0, 8.9e6, 900, 3600, 15], [1, 8.9e6, 900, 3600, 15]],
+      clock: p => p < 0.4 ? 'Centuries to go   ·   the core is fusing carbon' : p < 0.65 ? 'About a year to go   ·   neon, then oxygen' : p < 0.9 ? 'Days to go   ·   silicon is turning into iron' : 'The last second   ·   the iron core gives way',
+      txt: 'Each fuel lasts a shorter time than the one before: carbon for centuries, neon and oxygen for about a year, silicon for days. What is left is iron, and fusing iron gives no energy. From outside, nothing shows.' },
+    { n: 'SUPERNOVA', row: 'Supernova', len: 12, vis: 'sn', mark: 0.02, lasts: 'a second; the glow, for months', k: [[0, 8.9e6, 900, 3600, 15], [1, 8.9e6, 900, 3600, 15]],
+      f: { size: 'a fireball, growing at thousands of km a second', surf: '', bright: 'for weeks, around a billion Suns', mass: 'most of it is thrown out' },
+      clock: p => p < 0.09 ? 'The core collapses in less than a second' : 'Day ' + Math.max(1, Math.round((p - 0.09) / 0.91 * 150)) + ' after the collapse',
+      txt: 'The iron core, about the size of the Earth, falls in to a ball some 20 km across and rebounds. The shock tears the star apart. For weeks it outshines a billion suns, and in the blast elements heavier than iron are made.' },
+    { n: 'WHAT IS LEFT', row: 'What is left', len: 12, vis: 'rem', mark: 0.25, lasts: 'the cloud: some 100,000 years', k: [[0, 8.9e6, 1.6e-5, 1e6, 1.5], [1, 8.9e6, 1.6e-5, 1e6, 1.5]],
+      f: { size: 'about 20 km: the size of a city', surf: 'about a million °C', bright: 'mostly X-rays' },
+      clock: p => Number(Math.pow(10, 0.5 + p * 4.2).toPrecision(1)).toLocaleString('en-GB') + ' years after the explosion',
+      note: 'The pulsar is drawn turning about once a second. Young ones really turn 30 times a second. The cloud is not to scale.',
+      txt: 'The gas flies on and thins out, seeding space with oxygen, calcium and iron: the stuff of rocks, and of you. The core remains as a neutron star, here a pulsar sweeping two beams around. A still heavier star would leave a black hole.' }] }];
+for (const st of LIFE_STARS) { let s = 0; st.marks = [];
+  st.stages.forEach((g, i) => { g.s0 = s; s += g.len; g.s1 = s; st.marks.push([g.s0 + g.len * (g.mark === undefined ? 0.5 : g.mark), g.row, i]); for (const [p, t] of g.extra || []) st.marks.push([g.s0 + g.len * p, t, -1]);
+    if (g.vis === 'sn') st.bang = g.s0 + g.len * 0.09; });
+  st.marks.sort((a, b) => a[0] - b[0]); st.len = s; }
+function lifeNow(at) {            // where in its life the star is: the stage, how far through it, and its figures there
+  const star = LIFE_STARS[LIFE.star], s = Math.min(star.len - 1e-4, Math.max(0, at === undefined ? LIFE.s : at)), i = star.stages.findIndex(g => s < g.s1), st = star.stages[i], p = (s - st.s0) / st.len;
+  let a = st.k[0], b = st.k[st.k.length - 1]; for (let j = 0; j + 1 < st.k.length; j++) if (p >= st.k[j][0] && p <= st.k[j + 1][0]) { a = st.k[j]; b = st.k[j + 1]; break; }
+  const t = b[0] > a[0] ? (p - a[0]) / (b[0] - a[0]) : 0, lg = (x, y) => x > 0 && y > 0 ? Math.exp(Math.log(x) + (Math.log(y) - Math.log(x)) * t) : 0;
+  const R = lg(a[2], b[2]), T = lg(a[3], b[3]);
+  return { star, i, st, p, R, T, M: a[4] + (b[4] - a[4]) * t, age: st.logAge ? lg(a[1], b[1]) : a[1] + (b[1] - a[1]) * t, L: R * R * Math.pow(T / 5772, 4) }; }
+function lifeColour(T) {          // the colour of something glowing at that temperature (deepened a little, like the star colours everywhere here)
+  const t = Math.max(1000, Math.min(40000, T)) / 100;
+  const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592), g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307, c = [r, g, b].map(v => Math.max(0, Math.min(255, v)) / 255), m = Math.max(...c);
+  return c.map(v => Math.pow(v / m, 1.5 + 1.1 * Math.min(1, Math.max(0, (6500 - T) / 1500)))); }      // (cool stars most of all: a red giant should look red)
+const lifeR = R => 0.34 * Math.pow(R, 0.33);          // how big the model is drawn: squeezed, or a red giant would not fit in the sky
+const LIFE_TILT = 35 * D, LIFE_ROT = new Float32Array([1, 0, 0, 0, Math.cos(LIFE_TILT), Math.sin(LIFE_TILT), 0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)]), LIFE_B = [0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)];   // the disc, and the plane of the orbits, lean towards you
+const LIFE_ORBITS = [['ORBIT OF MERCURY', 83.2], ['ORBIT OF VENUS', 155.5], ['ORBIT OF THE EARTH', 215], ['ORBIT OF MARS', 327.6], ['ORBIT OF JUPITER', 1118.6]];      // in widths of the Sun's radius
+function startLife() { if (LIFE.on) return; rideOff(); WORLD = 0; S.worldNext = 0; S.groundT = 0; S.ground = 0; S.warp = null; S.at = -1; S.fspeed = 0; S.pos = [0, 0, 0]; S.deep = S.deepT = 0; S.wf = 1; S.wfT = 0; G.grabs = [];
+  Object.assign(LIFE, { on: true, s: 0, sT: 0, play: true, flash: 0, v: null }); soundSpace(); whoosh(2);
+  if (!starTex && !starTexAsked) { starTexAsked = true; loadTex('data:image/webp;base64,' + STEX, t => starTex = t); } }
+function lifeOff() { if (!LIFE.on) return; LIFE.on = false; LIFE.play = false; LIFE.flash = 0; LIFE.v = null; if (S.sheet === 'life') S.sheet = ''; }
+function lifePress(row) { const star = LIFE_STARS[LIFE.star];
+  if (row < 603) { if (row - 600 !== LIFE.star) { LIFE.star = row - 600; LIFE.s = LIFE.sT = 0; LIFE.flash = 0; } LIFE.play = true; if (LIFE.s >= LIFE_STARS[LIFE.star].len - 0.01) LIFE.s = LIFE.sT = 0; }
+  else if (row === 610) { if (!LIFE.play && LIFE.s >= star.len - 0.01) LIFE.s = LIFE.sT = 0; LIFE.play = !LIFE.play; }
+  else { LIFE.play = false; LIFE.sT = star.marks[row - 620][0]; } }
+function updateLife(dt, stickY) {
+  if (!LIFE.on) return; if (S.groundT || WORLD || S.warp || RIDE.on || Math.hypot(S.pos[0], S.pos[1], S.pos[2]) * 3.26156 > 0.02) return lifeOff();
+  if (!S.sheet) S.sheet = 'life';
+  const star = LIFE_STARS[LIFE.star], was = LIFE.s;
+  if (Math.abs(stickY) > 0.15) { LIFE.play = false; LIFE.s = LIFE.sT = Math.min(star.len, Math.max(0, LIFE.s - stickY * dt * 5)); }                             // stick forward: later
+  else if (LIFE.play) { LIFE.s = LIFE.sT = Math.min(star.len, LIFE.s + dt); if (LIFE.s >= star.len) LIFE.play = false; }
+  else if (LIFE.s !== LIFE.sT) { const gap = LIFE.sT - LIFE.s, st = Math.max(Math.abs(gap) * Math.min(1, dt * 1.6), 4 * dt); LIFE.s = st >= Math.abs(gap) ? LIFE.sT : LIFE.s + Math.sign(gap) * st; }
+  if (star.bang && was < star.bang && LIFE.s >= star.bang) { LIFE.flash = 1; boom(); }
+  LIFE.flash *= Math.exp(-dt * 1.7); if (LIFE.flash < 0.003) LIFE.flash = 0;
+  if (LIFE.s >= star.len - 0.05) flag('life');
+  LIFE.v = lifeView();
+}
+function lifeView() {             // what to draw for this moment: the ball, its glow, the gas round it, and what it is measured against
+  const n = lifeNow(), { star, st, p, R, T } = n, vis = st.vis, sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const v = { r: R ? lifeR(R) : 0, col: lifeColour(T), dim: sm(500, 2200, T), fx: 0, glow: null, dust: [], rings: [], n };
+  if (vis === 'cloud') { const nx = star.stages[n.i + 1].k[0]; v.r = lifeR(nx[2]) * sm(0.6, 1, p); v.col = lifeColour(nx[3]); v.dim = 1; v.dust.push([0, p, 1]); v.glow = [0.25 + 0.5 * p, 1.1 * p * p, [1, .5, .3]]; }
+  else if (vis === 'proto') { v.fx = 0.6 * p; v.dust.push([0, 1, 1 - sm(0.45, 0.85, p)], [1, 0, 1 - sm(0.1, 0.5, p)]); v.glow = [Math.max(0.25, v.r * 0.8), 0.9 * (1 - 0.5 * p), v.col]; }
+  else if (vis === 'star') { v.fx = 0.9; if (st.pulse) v.r *= 1 + 0.025 * Math.sin(S.time * 1.1) * (st.k[0][2] === st.k[st.k.length - 1][2] ? 1 : sm(0.3, 0.9, p)); }
+  else if (vis === 'pn') { const r0 = lifeR(st.k[0][2]) * 0.9; v.fx = 0.9 * (1 - sm(0, 0.08, p)); v.dust.push([2, r0 + (4.6 - r0) * Math.pow(p, 0.7), sm(0, 0.06, p) * (1 - 0.75 * sm(0.7, 1, p))]); v.glow = [Math.max(0.16, v.r * 3), 1.3 * sm(0.06, 0.2, p), v.col]; }
+  else if (vis === 'wd') { v.glow = [Math.max(0.14, v.r * 3), Math.min(1.25, Math.max(0, (Math.log10(Math.max(n.L, 1e-9)) + 5) / 5)), v.col]; if (st.shell) v.dust.push([2, 4.6 + 2.5 * p, 0.25 * (1 - sm(0, 0.3, p))]); }
+  else if (vis === 'dark') { v.rings.push({ rad: v.r * 1.5, col: [.2, .42, .46], a: 1 }); }
+  else if (vis === 'sn') { const r0 = lifeR(st.k[0][2]);
+    if (p < 0.09) { v.fx = 0.9; v.r *= 1 + 0.025 * Math.sin(S.time * 1.1); }
+    else { const q = (p - 0.09) / 0.91; v.r = 0; v.dust.push([3, r0 * 0.6 + (4.3 - r0 * 0.6) * Math.pow(q, 0.6), 1.7 - 0.6 * q]); v.glow = [1.1 + 2.4 * Math.sqrt(q), 3.4 * Math.exp(-q * 2.4) + 0.45, [.8, .88, 1]]; } }
+  else if (vis === 'rem') { v.dim = 1; v.col = [.75, .88, 1]; v.dust.push([3, 4.3 + 1.2 * p, 1.1 * (1 - 0.9 * sm(0.3, 1, p))], [4, 0, 1]); v.glow = [0.13, 1.1, [.7, .85, 1]]; }
+  if (R && vis !== 'sn') { const C = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]], sc = lifeR(R) / R, nn = norm(add3(S.head, C, -1)), rt = norm(cross([0, 1, 0], nn)), up = cross(nn, rt);
+    LIFE_ORBITS.forEach(([tag, a], j) => { const rad = sc * a; if (rad > 14 || rad < v.r * 0.98) return; const al = 1 - sm(8, 14, rad);            // the planets' orbits, at the star's own scale: they come into view as it swells
+      v.rings.push({ rad, flat: 1, col: [.18, .5, .56], a: al, tag: rad < 7.5 && rad > v.r * 1.04 ? tag : null, tp: add3(add3(add3(C, [1, 0, 0], rad * Math.cos((10 + 13 * j) * D)), LIFE_B, rad * Math.sin((10 + 13 * j) * D)), [0.12 + 0.1 * tagW[TAGS.indexOf(tag)] / 48, 0.16, 0]) }); });      // (each name starts on its own ring, on the near side, a little further round than the last)
+    for (const [tag, a, c] of [['THE SUN TODAY, SAME SCALE', 1, [.6, .5, .22]], ['THE EARTH, SAME SCALE', 0.00917, [.25, .42, .7]]]) { const rad = sc * a; if (rad < 0.035 || rad > 8 || (a === 1 && Math.abs(R - 1) < 0.12)) continue;
+      v.rings.push({ rad, col: c, a: 1, tag, tp: add3(add3(C, up, rad + 0.14), nn, v.r + 0.1) }); } }
+  return v;
+}
+const lifeDust = program(`
+  in vec4 aS; uniform mat4 uPV; uniform mat3 uRot; uniform vec3 uC; uniform float uMode, uA, uTime, uPx, uAmt, uR; out vec3 vCol;
+  vec3 dir(vec2 s){ float z = s.x*2.-1., a = s.y*6.2831853, q = sqrt(max(1.-z*z, 0.)); return vec3(q*cos(a), z, q*sin(a)); }
+  void main(){ vec3 d = dir(aS.xy), p, col; float sz = .06, a = 1.;
+    if (uMode < .5) {                                                          /* a cloud falling in, and flattening into a turning disc */
+      float r0 = 3.6*pow(aS.z, .4)*(.7+.3*sin(aS.w*40.+d.x*5.)), rd = uR*1.25 + .15 + 2.4*aS.z*aS.z, s = smoothstep(aS.w*.45, .55+aS.w*.45, uA);
+      float ang = uTime*(.05 + s*.5/pow(rd+.3, 1.5)) + uA*2.5*(1.-aS.z), ca = cos(ang), sa = sin(ang);
+      vec2 h = normalize(d.xz+1e-4); vec3 q = mix(d*r0, vec3(h.x*rd, d.y*.07*rd, h.y*rd), s); p = vec3(q.x*ca - q.z*sa, q.y, q.x*sa + q.z*ca);
+      col = mix(vec3(.55, .3, .38), mix(vec3(1., .72, .4), vec3(.8, .25, .12), aS.z), s); a = mix(.5, 1., s); sz = mix(.1, .05, s);
+    } else if (uMode < 1.5) {                                                  /* jets from the poles of a young star */
+      float sg = aS.x < .5 ? -1. : 1., t = fract(aS.z + uTime*.25), wd = (.03 + .13*t)*sqrt(aS.w), an = aS.y*6.2831853;
+      p = vec3(cos(an)*wd, sg*(uR + .05 + 3.4*t), sin(an)*wd); col = mix(vec3(.65, .85, 1.), vec3(1., .35, .45), t); a = (1.-t)*smoothstep(0., .06, t)*1.6; sz = .045;
+    } else if (uMode < 2.5) {                                                  /* a planetary nebula: a hot inner bubble and the cooler shell round it */
+      if (aS.w < .3) { p = d*uA*.5*(.85+.3*aS.z); col = vec3(.15, .85, .7); a = .8; }
+      else { p = d*uA*(.84+.16*aS.z)*(1.+.3*d.y*d.y); col = mix(vec3(1., .22, .18), vec3(1., .55, .25), aS.z*aS.z); }
+      sz = .08;
+    } else if (uMode < 3.5) {                                                  /* what a supernova throws out: ragged filaments */
+      float f = sin(d.x*9.+1.)*sin(d.y*11.+2.)*sin(d.z*10.), rr = (.5+.5*pow(aS.z, .3))*(1.+.2*f); p = d*uA*rr;
+      col = mix(vec3(.5, .68, 1.), vec3(1., .38, .14), smoothstep(.55, .9, rr)); a = .55+.9*max(f, 0.); sz = .11;
+    } else {                                                                   /* the two beams of a pulsar */
+      float sg = aS.x < .5 ? -1. : 1., t = aS.z, sp = uTime*6.; vec3 m = vec3(sin(.75)*cos(sp), cos(.75), sin(.75)*sin(sp));
+      p = sg*m*(.03+3.2*t) + d*(.015+.1*t)*aS.w; col = vec3(.6, .82, 1.); a = (1.-t)*(1.-t)*1.8; sz = .04; }
+    gl_Position = uPV*vec4(uC + uRot*p, 1.); float dist = max(gl_Position.w, .05);
+    gl_PointSize = clamp(uPx*sz*650./dist, 1.5, 30.*uPx); vCol = col*a*uAmt*.17*smoothstep(.3, 1.6, dist); }`, `
+  in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*2.2)*(1.-r2), 1.); }`);
+const LIFEN = 14000, lifeVao = (() => { let seed = 1983; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const v = new Float32Array(LIFEN * 4); for (let i = 0; i < v.length; i++) v[i] = rnd(); return vao(lifeDust, v, [['aS', 4]]); })();
+function drawLife(PVF, eye) {     // called with the deck already drawn, so the rail hides what is behind it; leaves the depth test on, depth writing off and additive blending
+  const v = LIFE.v; if (!v) return; const C = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]], q = qaxis([0, 1, 0], S.time * 0.05), nn = norm(add3(S.head, C, -1)), rt = norm(cross([0, 1, 0], nn)), up = cross(nn, rt);
+  if (v.r > 0.002 && starTex) { gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
+    gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PVF); gl.uniform3fv(globe.u.uEye, eye); gl.uniform1i(globe.u.uTex, 0); gl.uniform3f(globe.u.uLight, 0, 1, 0); gl.uniform1f(globe.u.uEm, 1); gl.uniform1f(globe.u.uDim, v.dim); gl.uniform4f(globe.u.uRing, 0, 0, 0, 0);
+    gl.bindTexture(gl.TEXTURE_2D, starTex); gl.bindVertexArray(sphereVao.v); gl.uniformMatrix4fv(globe.u.uModel, false, modelMatrix(q, C, v.r));
+    gl.uniform3fv(globe.u.uAtm, v.col.map(x => x * 0.9)); gl.uniform4f(globe.u.uTint, v.col[0], v.col[1], v.col[2], 0.85); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); gl.uniform1f(globe.u.uDim, 1); }
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  if (v.rings.length) { gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PVF); gl.bindVertexArray(circleVao.v);
+    for (const g of v.rings) { const a = g.flat ? [1, 0, 0] : rt, b = g.flat ? LIFE_B : up; if (g.flat || g.rad > v.r) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);          // (a comparison circle smaller than the star is drawn across its face)
+      gl.uniformMatrix4fv(orb.u.uModel, false, new Float32Array([a[0] * g.rad, a[1] * g.rad, a[2] * g.rad, 0, b[0] * g.rad, b[1] * g.rad, b[2] * g.rad, 0, 0, 0, 1, 0, C[0], C[1], C[2], 1]));
+      gl.uniform3fv(orb.u.uCol, g.col.map(x => x * g.a)); gl.drawArrays(gl.LINE_STRIP, 0, 129); }
+    gl.enable(gl.DEPTH_TEST); }
+  if (v.fx > 0.01 && v.r > 0.002 && starTex) drawSunFx(PVF, eye, C, q, v.r, v.col, v.fx * v.dim);
+  if (v.dust.length) { gl.useProgram(lifeDust.p); gl.uniformMatrix4fv(lifeDust.u.uPV, false, PVF); gl.uniformMatrix3fv(lifeDust.u.uRot, false, LIFE_ROT); gl.uniform3fv(lifeDust.u.uC, C);
+    gl.uniform1f(lifeDust.u.uTime, S.time); gl.uniform1f(lifeDust.u.uPx, S.px || 1); gl.uniform1f(lifeDust.u.uR, v.r); gl.bindVertexArray(lifeVao.v);
+    for (const [mode, A, amt] of v.dust) if (amt > 0.01) { gl.uniform1f(lifeDust.u.uMode, mode); gl.uniform1f(lifeDust.u.uA, A); gl.uniform1f(lifeDust.u.uAmt, amt); gl.drawArrays(gl.POINTS, 0, mode === 1 || mode === 4 ? 1800 : LIFEN); } }
+  if (v.glow && v.glow[1] > 0.01) { gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PVF); gl.uniform3fv(coronaProg.u.uC, C); gl.uniform3fv(coronaProg.u.uR, rt); gl.uniform3fv(coronaProg.u.uU, up);
+    gl.uniform1f(coronaProg.u.uRad, v.glow[0]); gl.uniform3fv(coronaProg.u.uCol, v.glow[2]); gl.uniform1f(coronaProg.u.uTime, S.time); gl.uniform1f(coronaProg.u.uAmt, v.glow[1] * (v.n.st.vis === 'wd' ? v.dim : 1)); gl.uniform1f(coronaProg.u.uInner, 0);
+    gl.bindVertexArray(coronaVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+}
+const lifeYears = y => y >= 1e12 ? (y < 1e13 ? (y / 1e12).toFixed(1) : Math.round(y / 1e12).toLocaleString('en-GB')) + ' trillion years' : y >= 1e9 ? (y < 1e11 ? (y / 1e9).toFixed(2) : Math.round(y / 1e9)) + ' billion years'
+  : y >= 1e6 ? (y < 1e7 ? (y / 1e6).toFixed(1) : Math.round(y / 1e6)) + ' million years' : y >= 1000 ? (Math.round(y / 1000) * 1000).toLocaleString('en-GB') + ' years' : Math.round(y) + ' years';
+const lifeNum = v => v >= 100 ? Number(v.toPrecision(2)).toLocaleString('en-GB') : v >= 10 ? String(Math.round(v)) : String(Number(v.toPrecision(2)));
+const lifeCv = document.createElement('canvas'); lifeCv.width = 1024; lifeCv.height = 800;
+const lifeTex = textTexture(lifeCv); let lifeKey = null, lifeNext = 0;
+function drawLifeSheet() {
+  const key = LIFE.star + '|' + LIFE.s.toFixed(2) + LIFE.play; if (key === lifeKey || S.time < lifeNext) return; lifeKey = key; lifeNext = S.time + 0.15;
+  const x = lifeCv.getContext('2d'), T = 'rgba(70,215,230,', A = '#ffa64a', n = lifeNow(), st = n.st, star = n.star, f = st.f || {}; sheetBase(x, 1024, 800);
+  x.fillStyle = T + '.95)'; x.font = '300 34px ' + FONT; spc(x, '0.3em'); x.fillText('THE LIFE OF A STAR', 44, 50);
+  x.textAlign = 'right'; x.fillStyle = T + '.5)'; x.font = '400 17px ' + FONT; spc(x, '0.08em'); x.fillText('stick forward: later   ·   back: earlier', 980, 50); x.textAlign = 'left';
+  LIFE_STARS.forEach((s, i) => { const bx = 30 + i * 325, on = i === LIFE.star; x.lineWidth = 2; x.strokeStyle = on ? A : T + '.5)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.05)'; x.fillRect(bx, 78, 314, 54); x.strokeRect(bx, 78, 314, 54);
+    x.fillStyle = on ? A : '#e6f2ff'; x.font = '500 19px ' + FONT; spc(x, '0.1em'); x.fillText(s.name, bx + 16, 96); x.fillStyle = T + '.65)'; x.font = '400 15px ' + FONT; spc(x, '0.04em'); x.fillText(s.sub, bx + 16, 118); });
+  x.fillStyle = '#e6f2ff'; x.font = '300 31px ' + FONT; spc(x, '0.06em'); x.fillText(st.n, 44, 172);
+  x.fillStyle = A; x.font = '400 21px ' + FONT; spc(x, '0.03em'); x.fillText(st.clock ? st.clock(n.p) : 'Age ' + lifeYears(n.age), 46, 208);
+  const deg = c => (c < 0 ? '−' : '') + Number(Math.abs(c).toPrecision(2)).toLocaleString('en-GB') + ' °C', none = st.vis === 'cloud';
+  const rows = [['Width', f.size !== undefined ? f.size : none ? 'thousands of times the planets\' orbits' : n.R >= 0.1 ? lifeNum(n.R) + ' × the Sun today' : lifeNum(n.R * 109.2) + ' × the Earth'],
+    ['Surface', f.surf !== undefined ? f.surf : none ? 'about −260 °C' : deg(n.T - 273)],
+    ['Brightness', f.bright !== undefined ? f.bright : none ? 'dark' : n.L >= 0.1 ? lifeNum(n.L) + ' × the Sun today' : n.L > 1e-7 ? '1/' + lifeNum(1 / n.L) + ' of the Sun today' : 'almost none'],
+    ['Mass', f.mass !== undefined ? f.mass : lifeNum(n.M) + ' × the Sun'], ['This stage lasts', st.lasts]];
+  rows.forEach(([a, b], i) => { const y = 248 + i * 32; x.fillStyle = T + '.7)'; x.font = '400 20px ' + FONT; spc(x, '0.03em'); x.fillText(a, 46, y); x.fillStyle = '#e6f2ff'; x.fillText(b, 214, y); });
+  { const X0 = 640, Y0 = 150, W = 350, H = 242, px = t => X0 + W * (Math.log10(2e5) - Math.log10(Math.max(2000, Math.min(2e5, t)))) / 2, py = l => Y0 + H * (6.3 - Math.log10(Math.max(1e-5, Math.min(2e6, l)))) / 11.3;   // brightness against temperature: the map astronomers keep of the stars
+    x.save(); x.beginPath(); x.rect(X0, Y0, W, H); x.clip(); x.fillStyle = T + '.04)'; x.fillRect(X0, Y0, W, H);
+    x.lineWidth = 15; x.lineCap = 'round'; x.lineJoin = 'round'; x.strokeStyle = T + '.13)'; x.beginPath(); [[40000, 3e5], [30000, 5e4], [20000, 5e3], [10000, 40], [7500, 7], [5772, 1], [4500, .2], [3500, .02], [2800, .002]].forEach(([t, l], i) => i ? x.lineTo(px(t), py(l)) : x.moveTo(px(t), py(l))); x.stroke();
+    x.lineWidth = 2; x.strokeStyle = T + '.6)'; x.beginPath(); let pen = false; for (let s = 0; s <= star.len; s += 0.1) { const m = lifeNow(s); if (!m.R || m.st.vis === 'sn' || m.st.vis === 'rem') { pen = false; continue; } pen ? x.lineTo(px(m.T), py(m.L)) : x.moveTo(px(m.T), py(m.L)); pen = true; } x.stroke();
+    x.fillStyle = T + '.5)'; x.font = '400 14px ' + FONT; spc(x, '0.06em'); x.fillText('hot', X0 + 8, Y0 + H - 12); x.fillText('bright', X0 + 8, Y0 + 14); x.fillText('main sequence', X0 + 22, py(150)); x.fillText('white dwarfs', X0 + 30, py(2e-4)); x.textAlign = 'right'; x.fillText('cool', X0 + W - 8, Y0 + H - 12); x.fillText('giants', X0 + W - 10, py(2e5)); x.textAlign = 'left';
+    if (n.R && st.vis !== 'sn' && st.vis !== 'rem') { const c = lifeColour(n.T).map(v => Math.round(255 * v)); x.fillStyle = `rgb(${c})`; x.strokeStyle = '#fff'; x.lineWidth = 2; x.beginPath(); x.arc(px(n.T), py(n.L), 7, 0, 6.2832); x.fill(); x.stroke(); }
+    x.restore(); x.lineWidth = 1.5; x.strokeStyle = T + '.4)'; x.strokeRect(X0, Y0, W, H); }
+  { x.fillStyle = T + '.85)'; x.font = '400 18px ' + FONT; spc(x, '0.03em'); let line = '', y = 420; const out = [];                       // what is happening, wrapped to the sheet
+    for (const w of st.txt.split(' ')) { if (x.measureText(line + w).width > 930) { out.push(line); line = ''; } line += w + ' '; } out.push(line); out.slice(0, 3).forEach((l, i) => x.fillText(l.trim(), 46, y + i * 25)); }
+  x.lineWidth = 2; x.strokeStyle = A; x.fillStyle = 'rgba(255,166,74,.10)'; x.fillRect(30, 492, 964, 44); x.strokeRect(30, 492, 964, 44);
+  x.fillStyle = A; x.font = '400 21px ' + FONT; spc(x, '0.1em'); x.fillText(LIFE.play ? 'PAUSE' : LIFE.s >= star.len - 0.01 ? 'WATCH IT AGAIN FROM THE START' : 'LET IT RUN FROM HERE', 60, 515);
+  star.marks.forEach(([s, t, gi], k) => { const bx = k < 6 ? 30 : 512, y = 564 + (k % 6) * 36, here = gi >= 0 ? gi === n.i : Math.abs(LIFE.s - s) < 0.25;
+    if ((k % 6) % 2 === 0) { x.fillStyle = T + '.05)'; x.fillRect(bx, y - 18, 482, 36); }
+    x.fillStyle = here ? A : gi < 0 ? T + '.9)' : '#e6f2ff'; x.font = '400 21px ' + FONT; spc(x, '0.03em'); x.fillText((gi < 0 ? '→  ' : '') + t, bx + 26, y); });
+  x.fillStyle = T + '.45)'; x.font = '400 15px ' + FONT; spc(x, '0.03em');
+  x.fillText(st.note || 'A model star, not one in your sky. Sizes are squeezed: a star 100 times wider is drawn only about 5 times wider.', 40, 773);
+  gl.bindTexture(gl.TEXTURE_2D, lifeTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, lifeCv); gl.generateMipmap(gl.TEXTURE_2D);
+}
+
 // ───────────── Logbook and missions: what you have found so far, kept between visits ─────────────
 const LOG = (() => { try { const v = JSON.parse(localStorage.getItem('starstruck-log')); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch (e) { return {}; } })();
 for (const k of ['stars', 'bodies', 'cons', 'events', 'done', 'deep']) if (!Array.isArray(LOG[k])) LOG[k] = [];
@@ -1890,8 +2236,10 @@ const MISSIONS = [
   { t: 'Take one part of the space station out and look at it alone', ok: () => LOG.flags.isspart },
   { t: 'Stand on another world (see WORLDS on the console)', ok: () => LOG.flags.world },
   { t: 'Run the sky 100,000 years on, or back (see DEEP TIME)', ok: () => LOG.flags.deeptime },
-  { t: 'Hover over the black hole Cygnus X-1 (last on the DEEP SKY list)', ok: () => LOG.flags.blackhole },
+  { t: 'Hover over the black hole Cygnus X-1 (BLACK HOLE on the console)', ok: () => LOG.flags.blackhole },
   { t: 'Go inside the space station and stand in the Cupola (see WORLDS)', ok: () => LOG.flags.cupola },
+  { t: 'Ride from the Earth out to the web of galaxies (SCALE on the console)', ok: () => LOG.flags.ride },
+  { t: 'Watch a star live and die, to the very end (STAR LIFE on the console)', ok: () => LOG.flags.life },
 ];
 function updateLog(dt, forward) {
   if ((logTick += dt) < 1) return; logTick = 0;
@@ -1921,12 +2269,12 @@ function drawLog() {
   x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(44, 182); x.lineTo(980, 182); x.stroke();
   x.fillStyle = A; x.font = '500 19px ' + FONT; spc(x, '0.2em'); x.fillText('MISSIONS   ' + LOG.done.length + ' / ' + MISSIONS.length, 44, 214);
   const next = MISSIONS.findIndex((_, i) => !LOG.done.includes(i));
-  MISSIONS.forEach((m, i) => { const y = 240 + i * 20.7, done = LOG.done.includes(i); x.font = '400 16.5px ' + FONT; spc(x, '0.02em');
+  MISSIONS.forEach((m, i) => { const y = 238 + i * 19.1, done = LOG.done.includes(i); x.font = '400 16px ' + FONT; spc(x, '0.02em');
     x.fillStyle = done ? T + '.9)' : i === next ? A : T + '.35)'; x.fillText(done ? '✓' : i === next ? '›' : '·', 50, y);
     x.fillStyle = done ? T + '.55)' : i === next ? '#e6f2ff' : T + '.6)'; x.fillText(m.t, 84, y); });
   const names = LOG.stars.slice(-14).join('   ·   ');
-  x.fillStyle = T + '.6)'; x.font = '500 15px ' + FONT; spc(x, '0.12em'); x.fillText('LATEST STARS', 44, 716);
-  x.fillStyle = '#e6f2ff'; x.font = '400 18px ' + FONT; spc(x, '0.02em'); x.fillText(names || 'none yet: point at a star and pull the trigger', 44, 748, 936);
+  x.fillStyle = T + '.6)'; x.font = '500 15px ' + FONT; spc(x, '0.12em'); x.fillText('LATEST STARS', 44, 728);
+  x.fillStyle = '#e6f2ff'; x.font = '400 18px ' + FONT; spc(x, '0.02em'); x.fillText(names || 'none yet: point at a star and pull the trigger', 44, 756, 936);
   gl.bindTexture(gl.TEXTURE_2D, logTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, logCv); gl.generateMipmap(gl.TEXTURE_2D);
 }
 
@@ -1937,7 +2285,7 @@ const addMeteor = (a, b, dur, bright) => { if (S.meteors.length < MAXM) S.meteor
 function lookWord(w) { if (w[1] > 0.88) return 'look overhead';
   return 'look ' + ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(((Math.atan2(w[0], -w[2]) / D + 360) % 360) / 45) % 8]; }
 function startEvent(type) {
-  if (EV.cur || S.away > 0.3 || WORLD || S.off) return;           // (the sky events belong to the sky of home)
+  if (EV.cur || S.away > 0.3 || WORLD || S.off || RIDE.on || LIFE.on) return;           // (the sky events belong to the sky of home)
   const lake = S.groundT === 1, all = lake ? ['fireball', 'shower', 'aurora', 'supernova'] : ['supernova'];
   let pool = all.filter(t => t !== EV.last); if (!pool.length) pool = all;       // floating in space only the supernova can be seen, so it may repeat
   type = type || pool[Math.floor(Math.random() * pool.length)];
@@ -1952,7 +2300,7 @@ function startEvent(type) {
   ev.look = lookWord(ev.dir); EV.cur = ev; EV.last = type; signal(); note('events', type);
 }
 function updateEvents(dt) {
-  if (!EV.cur) { if (S.intro > EV.next && S.away < 0.3 && !S.off && !S.warp && !WORLD) startEvent(); S.aurora += (0 - S.aurora) * Math.min(1, dt); S.nova = 0; return; }
+  if (!EV.cur) { if (S.intro > EV.next && S.away < 0.3 && !S.off && !S.warp && !WORLD && !LIFE.on) startEvent(); S.aurora += (0 - S.aurora) * Math.min(1, dt); S.nova = 0; return; }
   const e = EV.cur; e.t += dt;
   if (e.type === 'shower' && e.t > 3) { e.acc += dt * 1.7 * Math.min(1, (e.t - 3) / 8) * Math.min(1, (e.dur - e.t) / 10);       // they all stream away from one point
     while (e.acc > 1) { e.acc -= 1; const r = e.dir, q0 = norm(cross(r, [Math.random() - .5, Math.random() - .5, Math.random() - .5])), th = (12 + Math.random() * 50) * D, len = (8 + Math.random() * 16) * D;
@@ -1996,12 +2344,14 @@ function startWarp(to, star) {    // a jump: slow away, a long rush, slow arriva
 function warpTo(i) {              // stop just short of the star, on the side that leaves it in front of you and above the rail
   const w = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), el = Math.max(Math.asin(w[1]), 14 * D), h = Math.hypot(w[0], w[2]) || 1;
   const side = unSky(S.sky, [w[0] / h * Math.cos(el), Math.sin(el), w[2] / h * Math.cos(el)]); startWarp(add3(pickPos[i], side, i >= DSO0 ? -dsoGeo[i - DSO0].view : -0.01), i); }
-function goHome() { startWarp([0, 0, 0], -1); }
+function goHole() {                /* straight to Cygnus X-1 from anywhere; pressed there, it brings its sheet back */
+  if (S.warp) return; if (S.at === BHI) { S.sheet = 'bh'; return; } rideOff(); S.sheet = ''; warpTo(BHI); }
+function goHome() { rideOff(); lifeOff(); if (Math.hypot(...S.pos) * 3.26156 < 0.002) S.pos = [0, 0, 0]; startWarp([0, 0, 0], -1); }
 
 function update(dt, forward, stick, stickY, rays, fly) {
   S.time += dt; S.intro += dt;
   // time travel: the stick sets the pace, up to four hours of sky per second
-  updateBH(dt, stickY || 0); updateInside(dt); if (inside()) { rays = []; fly = null; }      // (inside the station the walls are in the way of the stars)
+  updateBH(dt, stickY || 0); updateInside(dt); if (inside()) { rays = []; fly = null; } if (RIDE.on) fly = null;      // (inside the station the walls are in the way of the stars)
   if (S.sheet === 'time') {      // with the deep-time sheet open the stick turns the ages instead of the hours: slowly at first, then faster the longer you hold
     if (Math.abs(stick) > 0.12) { S.deepHold += dt; S.deepT = S.deep = Math.max(-DEEP_MAX, Math.min(DEEP_MAX, S.deep + Math.sign(stick) * stick * stick * 300 * Math.exp(Math.min(S.deepHold, 9.5) * 0.72) * dt)); } else S.deepHold = 0;
     stick = 0; }
@@ -2015,7 +2365,7 @@ function update(dt, forward, stick, stickY, rays, fly) {
   // floating: the whole sphere slowly tumbles towards you; back on the ground it settles the short way round
   const TAU = Math.PI * 2, floatAmt = 1 - S.ground;
   if (S.groundT) S.drift += (Math.round(S.drift / TAU) * TAU - S.drift) * Math.min(1, dt * 2.2);
-  else if (!fly && S.away < 0.01) S.drift += dt * 1.5 * D * floatAmt * (1 - 3 * (stickY || 0));
+  else if (!fly && S.away < 0.01) S.drift += dt * 1.5 * D * floatAmt * (1 - 3 * (LIFE.on ? 0 : stickY || 0));      // (while a star's life is shown the stick turns its years instead)
   const A = skyMatrix(S.sim), c = Math.cos(S.drift), n = Math.sin(S.drift);
   for (let i = 0; i < 9; i += 3) { const y = A[i + 1], z = A[i + 2]; A[i + 1] = y * c - z * n; A[i + 2] = y * n + z * c; }
   S.sky = A;
@@ -2027,16 +2377,18 @@ function update(dt, forward, stick, stickY, rays, fly) {
     S.pos = lerp3(w.from, w.to, e); bell = Math.sin(Math.PI * k);
     if (k >= 1) { S.pos = w.to.slice(); S.warp = null; S.at = w.star;   /* (land exactly on the spot: coming from millions of light-years away, rounding would miss it) */  if (w.star >= 0) { chime(w.star); if (w.star >= DSO0) { note('deep', PICK[w.star][3]); if (PICK[w.star][6][1] === 'galaxy') flag('galaxy'); }
       else { note('stars', PICK[w.star][3]); if (DOUBLES[PICK[w.star][3]]) flag('double'); if (PICK[w.star][5] >= 1.2) flag('red'); if (PICK[w.star][5] < -0.02) flag('blue'); } } else ping(); } }
+  else if (RIDE.on) S.fspeed = 0;
   else { if (S.at >= 0 && dist3(S.pos, pickPos[S.at]) > (S.at >= DSO0 ? dsoGeo[S.at - DSO0].view * 1.5 : 0.05)) S.at = -1;
     const target = fly ? Math.min(250, 0.8 * Math.exp(fly.hold * 0.85)) : 0;
     S.fspeed += (target - S.fspeed) * Math.min(1, dt * (fly ? 4 : 2.5));
     if (fly) { S.fdir = unSky(A, fly.dir); if (S.groundT) toggleGround(); }
     if (S.fspeed > 0.001) { const lim = Math.max(MAXPC, plen()); S.pos = add3(S.pos, S.fdir, S.fspeed * dt / LY); const r = plen(); if (r > lim) S.pos = S.pos.map(x => x * lim / r); } }      // free flight ends 1,500 light-years out; from a far destination you can roam, but not further away
+  updateRide(dt, stickY || 0); updateLife(dt, stickY || 0);
   { const r = plen(), k = r > 1 ? Math.log(1 + r / FARL) / r : 1 / FARL, q = S.pos.map(x => x * k);      // logarithmic, so a trip of 60 million light-years does not become a blur
     const tr = dt > 0 ? add3(q, S.farQ, -1).map(x => x / dt * 0.1) : [0, 0, 0], tl = Math.hypot(tr[0], tr[1], tr[2]);
-    S.farTrail = tl > 0.1 ? tr.map(x => x * 0.1 / tl) : tr; S.farQ = q; S.far = Math.min(1, Math.max(0, (r * LY - 6000) / 40000)); }
+    S.farTrail = tl > 0.1 ? tr.map(x => x * 0.1 / tl) : tr; S.farQ = q; S.far = RIDE.on ? 0 : Math.min(1, Math.max(0, (r * LY - 6000) / 40000)); }      // (on the scale ride the real galaxies are drawn instead)
   S.away = plen() * LY; S.home = (1 - Math.min(1, Math.max(0, (S.away - 0.3) / 1.7))) * (1 - Math.min(1, Math.max(0, (Math.abs(S.deep) - 150) / 1500)));   // figures and names belong to the sky of here and now
-  S.off = S.away > 0.02 || Math.abs(S.deep) > 50;
+  S.off = S.away > 0.02 || Math.abs(S.deep) > 50 || RIDE.on;
   if (S.away > 0.3) setSunCard();
   const vel = dt > 0 ? add3(S.pos, before, -1).map(x => x / dt) : [0, 0, 0], sp = Math.hypot(vel[0], vel[1], vel[2]);   // parsecs per second
   const tl = Math.max(sp * 0.3, 3.5 * bell); S.trail = sp > 1e-6 ? vel.map(x => x / sp * tl) : [0, 0, 0];
@@ -2156,6 +2508,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); }
     gl.uniform1f(globe.u.uDim, 1); gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(stars.p); }
   if (WORLD && S.ground > 0.01 && S.wobj) drawWorldSky(PV);
+  if (RIDE.on) drawRideNear(PV);
   if (S.streak > 0.01) {                             // fast travel: the stars smear into lines
     gl.useProgram(streak.p); gl.uniformMatrix4fv(streak.u.uPV, false, PV); gl.uniformMatrix3fv(streak.u.uSky, false, S.sky);
     gl.uniform1f(streak.u.uYears, S.deep); gl.uniform3fv(streak.u.uCam, S.pos); gl.uniform3fv(streak.u.uEye, eoff); gl.uniform3fv(streak.u.uTrail, S.trail); gl.uniform1f(streak.u.uAmt, S.streak);
@@ -2168,6 +2521,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
     gl.useProgram(cometSky.p); gl.uniformMatrix4fv(cometSky.u.uPV, false, PV); gl.uniform3fv(cometSky.u.uC, C); gl.uniform3fv(cometSky.u.uU, U); gl.uniform3fv(cometSky.u.uV, cross(C, U));
     gl.uniform1f(cometSky.u.uGround, S.ground); gl.uniform1f(cometSky.u.uAmt, Math.min(1, Math.max(0, (S.intro - 9) / 6)));
     gl.bindVertexArray(cometSkyVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+  if (RIDE.on) { drawRideFar(PV, vpH); gl.useProgram(stars.p); }
   if (S.far > 0.003) {                               // out between the galaxies
     gl.useProgram(far.p); gl.uniformMatrix4fv(far.u.uPV, false, PV); gl.uniformMatrix3fv(far.u.uSky, false, S.sky); gl.uniform3fv(far.u.uQ, S.farQ); gl.uniform3fv(far.u.uEye, eoff);
     gl.uniform1f(far.u.uPx, vpH / 1000); gl.uniform1f(far.u.uAmt, S.far); gl.uniform1f(far.u.uLine, 0); gl.uniform3f(far.u.uTrail, 0, 0, 0);
@@ -2215,13 +2569,13 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.useProgram(labels.p); gl.uniformMatrix4fv(labels.u.uPV, false, PV); gl.uniformMatrix3fv(labels.u.uSky, false, S.sky);
   gl.uniform1f(labels.u.uGround, S.ground); gl.uniform1f(labels.u.uHi, S.hi); gl.uniform1f(labels.u.uHiAmt, S.hiAmt);
   gl.uniform1f(labels.u.uLines, Math.max(S.linesA, S.figA) * S.home * night); gl.uniform1f(labels.u.uNames, S.namesA * S.home * night); gl.uniform1f(labels.u.uHelp, S.help);
-  gl.uniform1f(labels.u.uPick, S.pickAmt); gl.uniform1f(labels.u.uPlanets, Math.min(1, Math.max(0, (S.intro - 9) / 4)) * 0.8 * S.home * night);
+  gl.uniform1f(labels.u.uPick, S.pickAmt); gl.uniform1f(labels.u.uPlanets, Math.min(1, Math.max(0, (S.intro - 9) / 4)) * 0.8 * S.home * night * (RIDE.on ? 0 : 1));
   gl.uniform1f(labels.u.uClock, Math.min(1, Math.max(0, S.clockUntil - S.time)) * 0.85); gl.uniform1i(labels.u.uTex, 0);
   gl.bindTexture(gl.TEXTURE_2D, labelTex); gl.bindVertexArray(labelVao.v); gl.drawElements(gl.TRIANGLES, labelQuads * 6, gl.UNSIGNED_INT, 0);
   gl.bindVertexArray(planetLabVao.v); gl.drawElements(gl.TRIANGLES, PLANETS.length * 6, gl.UNSIGNED_INT, 0);
   if (S.time < S.clockUntil) { gl.bindTexture(gl.TEXTURE_2D, clockTex); gl.bindVertexArray(clockVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   if (S.pickAmt > 0.01) { gl.bindTexture(gl.TEXTURE_2D, cardTex); gl.bindVertexArray(cardVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
-  if (S.away > 0.3 && !BH.on) { gl.uniform1f(labels.u.uPick, Math.min(1, (S.away - 0.3) / 2) * 0.9); gl.bindTexture(gl.TEXTURE_2D, sunTex); gl.bindVertexArray(sunVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
+  if (S.away > 0.3 && !BH.on && !(RIDE.on && RIDE.s > 18.6)) { gl.uniform1f(labels.u.uPick, Math.min(1, (S.away - 0.3) / 2) * 0.9); gl.bindTexture(gl.TEXTURE_2D, sunTex); gl.bindVertexArray(sunVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   const PVF = mul4(proj, viewFull || viewRot);
   drawPanel();
   if (inside()) drawInside(PVF, eye || [0, 0, 0]);
@@ -2234,7 +2588,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.uniform3f(panelProg.u.uHover, S.hover ? S.hover[0] : 0, S.hover ? S.hover[1] : 0, S.hover ? 1 : 0);
   gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.bindVertexArray(panelVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
   gl.uniform3f(panelProg.u.uHover, 0, 0, 0); drawInfo();
-  if (S.sheet) { if (S.sheet === 'log') drawLog(); if (S.sheet === 'deep') drawDeep(); if (S.sheet === 'worlds') drawWorlds(); if (S.sheet === 'time') drawTime(); if (S.sheet === 'bh') drawBH(); if (S.sheet === 'iss') drawRooms(); gl.bindTexture(gl.TEXTURE_2D, S.sheet === 'iss' ? inSheetTex : S.sheet === 'bh' ? bhSheetTex : S.sheet === 'time' ? timeTex : S.sheet === 'log' ? logTex : S.sheet === 'deep' ? deepTex : S.sheet === 'worlds' ? worldSheetTex : helpTex); gl.bindVertexArray((inside() ? helpVaoIn : helpVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
+  if (S.sheet) { if (S.sheet === 'log') drawLog(); if (S.sheet === 'deep') drawDeep(); if (S.sheet === 'worlds') drawWorlds(); if (S.sheet === 'time') drawTime(); if (S.sheet === 'bh') drawBH(); if (S.sheet === 'iss') drawRooms(); if (S.sheet === 'ride') drawRideSheet(); if (S.sheet === 'life') drawLifeSheet(); gl.bindTexture(gl.TEXTURE_2D, S.sheet === 'life' ? lifeTex : S.sheet === 'ride' ? rideTex : S.sheet === 'iss' ? inSheetTex : S.sheet === 'bh' ? bhSheetTex : S.sheet === 'time' ? timeTex : S.sheet === 'log' ? logTex : S.sheet === 'deep' ? deepTex : S.sheet === 'worlds' ? worldSheetTex : helpTex); gl.bindVertexArray((inside() ? helpVaoIn : helpVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   if (infoOn) { gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.bindVertexArray((inside() ? infoVaoIn : infoVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
   gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
@@ -2253,6 +2607,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
         sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08); }
       gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
       for (const [pos, q, r, c] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, 0.9); } }
+  if (LIFE.on) drawLife(PVF, eye || [0, 0, 0]);
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
   drawRoom(PVF, eye);
   if (tagCount) { gl.enable(gl.DEPTH_TEST); gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, 0); gl.uniform3f(tagProg.u.uCol, .72, .95, 1);
@@ -2260,6 +2615,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   if (viewFull && beamCount) { gl.useProgram(beam.p); gl.uniformMatrix4fv(beam.u.uPV, false, PVF);
     gl.bindVertexArray(beamVao.v); gl.drawArrays(gl.LINES, 0, beamCount * 2); }
   gl.disable(gl.DEPTH_TEST); gl.depthMask(true);
+  if (LIFE.on && LIFE.flash > 0.003) { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(fadeProg.p); gl.uniform1f(fadeProg.u.uF, 1 - 0.8 * LIFE.flash); gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }   // the supernova's flash
   if (S.wf > 0.003) { gl.enable(gl.BLEND); gl.blendFunc(gl.ZERO, gl.SRC_COLOR); gl.useProgram(fadeProg.p); gl.uniform1f(fadeProg.u.uF, S.wf); gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }   // the blink between worlds
   gl.bindVertexArray(null);
 }
@@ -2304,11 +2660,11 @@ canvas.addEventListener('pointerleave', () => mouse = null);
 canvas.addEventListener('wheel', e => { e.preventDefault(); if (G.i >= 0 && !G.anim) { G.rad = Math.max(0.05, Math.min(0.75, G.rad * (1 - Math.sign(e.deltaY) * 0.08))); return; }
   S.fov = Math.max(20 * D, Math.min(100 * D, S.fov * (1 + Math.sign(e.deltaY) * 0.08))); e.preventDefault(); }, { passive: false });
 addEventListener('keydown', e => { const k = e.key.toLowerCase(); if (k !== 'm') startAudio();
-  if (k === '?' || k === '/') S.sheet = S.sheet === 'help' ? '' : 'help'; if (k === 'd') S.sheet = S.sheet === 'deep' ? '' : 'deep'; if (k === 'p') S.sheet = S.sheet === 'worlds' ? '' : 'worlds'; if (k === 't') S.sheet = S.sheet === 'time' ? '' : 'time'; if (k === 'l') S.sheet = S.sheet === 'log' ? '' : 'log';
+  if (k === '?' || k === '/') S.sheet = S.sheet === 'help' ? '' : 'help'; if (k === 'd') S.sheet = S.sheet === 'deep' ? '' : 'deep'; if (k === 'p') S.sheet = S.sheet === 'worlds' ? '' : 'worlds'; if (k === 't') S.sheet = S.sheet === 'time' ? '' : 'time'; if (k === 'u') { if (!RIDE.on) startRide(); S.sheet = 'ride'; } if (k === 'l') S.sheet = S.sheet === 'log' ? '' : 'log';
   if (k === 'm') toggleMute(); else if (k === 'c') cycleMode(); else if (k === 'g') toggleGround(); else if (k === 'n') backToNow();
   else if (k === 'e') startEvent(['fireball', 'shower', 'aurora', 'supernova'][EV.turn++ % 4]);
   else if (k === 'w') { if (!flyKey) flyKey = S.time || 1e-6; } else if (k === 'h') goHome();
-  else if (k === 'b') dismiss(); else if (k >= '1' && k <= '8') summonFlat(+k - 1); else if (k === '9') summonSystem(); else if (k === '0') summonFlat(SUN); else if (k === 'o') summonFlat(MOON); else if (k === 'k') summonFlat(COMET); else if (k === 'i') summonFlat(ISS); else if (k === 'x') toggleExplode();
+  else if (k === 'b') dismiss(); else if (k >= '1' && k <= '8') summonFlat(+k - 1); else if (k === '9') summonSystem(); else if (k === '0') summonFlat(SUN); else if (k === 'o') summonFlat(MOON); else if (k === 'k') summonFlat(COMET); else if (k === 'i') summonFlat(ISS); else if (k === 'x') toggleExplode(); else if (k === 'j') goHole(); else if (k === 's') { if (!LIFE.on) startLife(); S.sheet = 'life'; }
   else if (e.key === 'ArrowRight') keyStick = 0.75; else if (e.key === 'ArrowLeft') keyStick = -0.75;
   else if (e.key === 'ArrowUp') keyStickY = -1; else if (e.key === 'ArrowDown') keyStickY = 1; });
 addEventListener('keyup', e => { if (e.key.toLowerCase() === 'w') flyKey = 0; if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') keyStick = 0; if (e.key === 'ArrowUp' || e.key === 'ArrowDown') keyStickY = 0; });
