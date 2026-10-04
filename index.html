@@ -36,7 +36,7 @@
   <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0).</p>
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
-    <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>M</kbd> sound</span>
+    <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>M</kbd> sound · <kbd>?</kbd> help sheet</span>
   </div>
 </div>
 <script>
@@ -430,12 +430,8 @@ let labelVao, labelQuads = 0, labelTex;
   [['N', 0], ['NE', 45], ['E', 90], ['SE', 135], ['S', 180], ['SW', 225], ['W', 270], ['NW', 315]].forEach(([t, az]) =>
     items.push({ text: t, dir: horizDir(az, 6.5), kind: 2, id: -1, h: t.length === 1 ? 2.6 : 1.7, sp: '0.1em', font: '500 40px ' + FONT, dy: 0 }));
   for (const p of PLANETS) items.push({ text: p.name.toUpperCase(), dir: [0, 0, 1], kind: 6, id: -1, h: 1.5, sp: '0.2em', font: '500 36px ' + FONT, dy: 1.7, planet: p });
-  items.push({ text: 'Point at a star to meet it   ·   Trigger: constellations   ·   Grip: float in space', dir: horizDir(0, 21), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
-  items.push({ text: 'Stick left / right: time travel   ·   up / down: drift speed while floating   ·   A / X: now', dir: horizDir(0, 18), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
-  items.push({ text: 'Planets: trigger calls one to you   ·   hold trigger to grab and turn   ·   two hands resize   ·   B / Y sends it home', dir: horizDir(0, 15), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
-  items.push({ text: 'Earth is under your feet: point down and pull the trigger', dir: horizDir(0, 12), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
-  items.push({ text: 'The console in front of you calls planets and switches views: point at it and pull the trigger', dir: horizDir(0, 27), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
-  items.push({ text: 'Point at a star and pull the trigger to travel there   ·   hold the trigger on empty sky to fly freely   ·   A / X brings you home', dir: horizDir(0, 24), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
+  items.push({ text: 'Point at things and pull the trigger', dir: horizDir(0, 22), kind: 3, id: -1, h: 1.9, sp: '0.1em', font: '400 36px ' + FONT, dy: 0 });
+  items.push({ text: 'Press HELP on the console in front of you for all the controls', dir: horizDir(0, 18.5), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
 
   const W = 2048, H = 2048, ROW = 56, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.textBaseline = 'middle';
@@ -781,11 +777,11 @@ let deckVao, deckCount, panelVao;
 // what is on the console
 const panelCv = document.createElement('canvas'); panelCv.width = 1024; panelCv.height = 512;
 const panelCx = panelCv.getContext('2d'), panelTex = textTexture(panelCv);
-const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'SEND BACK'], ['view', 'FIGURES'], ['ground', 'LAKE / SPACE'], ['home', 'HOME · NOW']];
+const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'SEND BACK'], ['view', 'FIGURES'], ['ground', ''], ['home', 'HOME'], ['sound', ''], ['help', 'HELP']];
 const DISC = [['#8f8a86', '#3e3b39'], ['#f2deb0', '#8a6f3c'], ['#4f8fe0', '#12305e'], ['#e0683c', '#5e2414'], ['#e2c39a', '#7a5a3a'], ['#ecd9a4', '#7d6a3e'], ['#a9e6ea', '#3f7f88'], ['#4a6cf0', '#16246e']];
 let panelState = '';
 function drawPanel() {
-  const state = G.i + '|' + S.mode + '|' + S.groundT; if (state === panelState) return; panelState = state;
+  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.helpOn; if (state === panelState) return; panelState = state;
   const x = panelCx, T = 'rgba(70,215,230,', A = '#ffa64a';
   x.fillStyle = '#040910'; x.fillRect(0, 0, 1024, 512); x.textBaseline = 'middle'; x.lineWidth = 2;
   x.strokeStyle = T + '.55)'; x.strokeRect(14, 14, 996, 484);
@@ -811,10 +807,11 @@ function drawPanel() {
     x.fillStyle = '#ffd98a'; x.beginPath(); x.arc(cx, cy, 8, 0, Math.PI * 2); x.fill();
     x.fillStyle = on ? A : T + '.9)'; for (const [dx, dy] of [[21, -6], [-36, 9], [48, 18]]) { x.beginPath(); x.arc(cx + dx, cy + dy, 3.5, 0, Math.PI * 2); x.fill(); }
     x.textAlign = 'center'; x.font = '500 15px ' + FONT; sp('0.12em'); x.fillText('SOL SYSTEM', cx, 274); }
-  PILLS.forEach(([id, label], i) => { const px = 40 + i * 162, on = (id === 'back' && G.i >= 0) || (id === 'ground' && !S.groundT);
+  PILLS.forEach(([id, label], i) => { const px = 40 + i * 121, on = (id === 'back' && G.i >= 0) || (id === 'sound' && Snd.muted) || (id === 'help' && S.helpOn);
+    if (id === 'ground') label = S.groundT ? 'TO SPACE' : 'TO LAKE'; if (id === 'sound') label = Snd.muted ? 'SOUND OFF' : 'SOUND ON';
     x.lineWidth = 2; x.strokeStyle = on ? A : T + '.6)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.06)';
-    x.beginPath(); x.roundRect(px, 364, 148, 72, 14); x.fill(); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 17px ' + FONT; sp('0.12em'); x.fillText(label, px + 74, 401); });
+    x.beginPath(); x.roundRect(px, 364, 112, 72, 14); x.fill(); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 15px ' + FONT; sp('0.08em'); x.fillText(label, px + 56, 401); });
   x.textAlign = 'left'; x.fillStyle = T + '.4)'; x.font = '400 14px ' + FONT; sp('0.14em'); x.fillText('POINT AND PULL THE TRIGGER', 40, 470);
   gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panelCv); gl.generateMipmap(gl.TEXTURE_2D);
 }
@@ -826,13 +823,109 @@ function panelHit(o, d) {         // where does a ray meet the console? returns 
 }
 function panelButton(uv) { const px = uv[0] * 1024, py = uv[1] * 512;
   if (py > 140 && py < 290) { if (px < 113) return SUN; if (px > 889) return SYS; const i = Math.round((px - 160) / 94); if (i >= 0 && i < PLANETS.length) return i; }
-  if (py > 360 && py < 440) for (let i = 0; i < PILLS.length; i++) if (px > 40 + i * 162 && px < 188 + i * 162) return PILLS[i][0];
+  if (py > 360 && py < 440) for (let i = 0; i < PILLS.length; i++) if (px > 40 + i * 121 && px < 152 + i * 121) return PILLS[i][0];
   return null; }
 function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return; blip();
   if (b === SYS) { if (G.i !== SYS) summonSystem(); }
   else if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], skyDirOf(b), b === SUN ? 0.26 : 0.2, eye); }
   else if (b === 'smaller' || b === 'larger') { if (G.i >= 0 && !G.anim) G.radT = Math.max(0.04, Math.min(2.5, (G.radT || G.rad) * (b === 'larger' ? 1.45 : 1 / 1.45))); }
-  else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround(); else { backToNow(); goHome(); } }
+  else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround();
+  else if (b === 'sound') toggleMute(); else if (b === 'help') S.helpOn = !S.helpOn; else { backToNow(); goHome(); } }
+
+// ───────────── Help sheet, fact sheet and small floating tags ─────────────
+function board(c, w, h) {         // an upright sheet at c (height above the floor), turned to face the middle of the deck
+  const n = norm([-c[0], 0, -c[2]]), r = norm(cross([0, 1, 0], n)), v = [];
+  for (const [x, y, uu, vv] of [[-1, 1, 0, 0], [1, 1, 1, 0], [-1, -1, 0, 1], [1, -1, 1, 1]]) v.push(c[0] + r[0] * x * w / 2, c[1] + y * h / 2, c[2] + r[2] * x * w / 2, uu, vv);
+  return vao(panelProg, new Float32Array(v), [['aPos', 3], ['aUV', 2]], quadIndex(1));
+}
+const sheetBase = (x, W, H) => { x.fillStyle = '#040910'; x.fillRect(0, 0, W, H); x.lineWidth = 2; x.strokeStyle = 'rgba(70,215,230,.55)'; x.strokeRect(12, 12, W - 24, H - 24); x.textBaseline = 'middle'; x.textAlign = 'left'; };
+const spc = (x, v) => { try { x.letterSpacing = v; } catch (e) {} };
+const helpCv = document.createElement('canvas'); helpCv.width = 1024; helpCv.height = 800;
+const helpVao = board([-1.3, 1.5, -1.5], 1.2, 0.9375);
+const HELP = [
+  ['TRIGGER', [['on the console', 'press that button'], ['on a star with a name card', 'travel there'], ['on a planet in the sky', 'bring it to you'], ['on a globe', 'hold to grab, turn and move it'],
+    ['in the Sol System model', 'zoom that planet in (the Sun: quick tap)'], ['on empty sky', 'tap: change the view   ·   hold: fly freely'], ['pointing straight down', 'bring up Earth']]],
+  ['HOLDING A GLOBE', [['second hand on it too', 'pull apart or together to resize'], ['thumbstick up / down', 'resize']]],
+  ['OTHER BUTTONS', [['grip', 'lake or open space'], ['thumbstick left / right', 'travel through time'], ['thumbstick up / down', 'drift speed while floating'], ['A  /  X', 'back home and back to now'], ['B  /  Y', 'send the globe back']]],
+];
+{ const x = helpCv.getContext('2d'), T = 'rgba(70,215,230,', A = '#ffa64a'; sheetBase(x, 1024, 800);
+  x.fillStyle = T + '.95)'; x.font = '300 34px ' + FONT; spc(x, '0.34em'); x.fillText('CONTROLS', 44, 58);
+  let y = 112; for (const [head, rows] of HELP) { x.fillStyle = A; x.font = '500 19px ' + FONT; spc(x, '0.2em'); x.fillText(head, 44, y); y += 34;
+    for (const [a, b] of rows) { x.fillStyle = T + '.7)'; x.font = '400 22px ' + FONT; spc(x, '0.03em'); x.fillText(a, 60, y); x.fillStyle = '#e6f2ff'; x.fillText(b, 400, y); y += 35; } y += 22; }
+  x.fillStyle = T + '.45)'; x.font = '400 17px ' + FONT; spc(x, '0.1em'); x.fillText('A small tag at your pointer says what the trigger will do.   Press HELP again to close.', 44, 762); }
+const helpTex = textTexture(helpCv);
+
+// what there is to know about the thing in front of you
+const FACTS = [
+  ['MERCURY', 'The smallest planet', [['Diameter', '4,879 km   ·   0.38 × Earth'], ['Day (sunrise to sunrise)', '176 Earth days'], ['Year', '88 days'], ['Moons', 'none'], ['From the Sun', '58 million km']], 'About 430 °C by day and −180 °C at night.'],
+  ['VENUS', 'Earth\'s size, nothing like Earth', [['Diameter', '12,104 km   ·   0.95 × Earth'], ['One turn', '243 days, backwards'], ['Year', '225 days'], ['Moons', 'none'], ['From the Sun', '108 million km']], 'The hottest planet: about 465 °C under thick carbon dioxide.'],
+  ['EARTH', 'Home', [['Diameter', '12,742 km'], ['Day', '24 hours'], ['Year', '365.25 days'], ['Moons', '1'], ['From the Sun', '150 million km']], 'The only place known to have life.'],
+  ['MARS', 'The red planet', [['Diameter', '6,779 km   ·   0.53 × Earth'], ['Day', '24 h 37 min'], ['Year', '687 days'], ['Moons', '2'], ['From the Sun', '228 million km']], 'Olympus Mons is the tallest volcano known, about 22 km high.'],
+  ['JUPITER', 'The giant', [['Diameter', '139,820 km   ·   11 × Earth'], ['Day', '9 h 56 min'], ['Year', '11.9 years'], ['Moons', 'more than 90 known'], ['From the Sun', '778 million km']], 'The Great Red Spot is a storm wider than Earth.'],
+  ['SATURN', 'The ringed planet', [['Diameter', '116,460 km   ·   9.1 × Earth'], ['Day', 'about 10 h 33 min'], ['Year', '29.4 years'], ['Moons', 'more than 140 known'], ['From the Sun', '1.43 billion km']], 'The rings are mostly water ice, and in places only tens of metres thick.'],
+  ['URANUS', 'The planet on its side', [['Diameter', '50,724 km   ·   4.0 × Earth'], ['Day', '17 h 14 min'], ['Year', '84 years'], ['Moons', 'at least 27'], ['From the Sun', '2.87 billion km']], 'Its axis is tilted 98°, so it rolls around the Sun.'],
+  ['NEPTUNE', 'The far blue one', [['Diameter', '49,244 km   ·   3.9 × Earth'], ['Day', '16 h 6 min'], ['Year', '165 years'], ['Moons', 'at least 14'], ['From the Sun', '4.5 billion km']], 'The fastest winds measured anywhere: over 2,000 km/h.'],
+  ['SOL SYSTEM', 'The Sun and its eight planets', [['Speed of this model', '40 days every second'], ['Starts from', 'the date you were on'], ['Orbits and positions', 'real'], ['Distances', 'squeezed together'], ['Sizes', 'enlarged, far out of scale']], 'Point at a planet or the Sun and pull the trigger to zoom in.'],
+  ['THE SUN', 'Our star', [['Diameter', '1.39 million km   ·   109 × Earth'], ['Surface', 'about 5,500 °C'], ['Age', '4.6 billion years'], ['Share of the system\'s mass', '99.8 %'], ['Light reaches Earth in', '8 min 20 s']], 'A yellow dwarf, class G2.'],
+];
+function starFacts(i) { const p = PICK[i], bv = p[5], T = 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62));       // temperature from colour (Ballesteros' formula)
+  const cls = T > 30000 ? ['O', 'blue'] : T > 10000 ? ['B', 'blue-white'] : T > 7500 ? ['A', 'white'] : T > 6000 ? ['F', 'yellow-white'] : T > 5200 ? ['G', 'yellow'] : T > 3700 ? ['K', 'orange'] : ['M', 'red'];
+  const L = Math.pow(10, 0.4 * (4.83 - pickAbs[i])), n = v => v >= 100 ? (Math.round(v / (v >= 1000 ? 100 : 10)) * (v >= 1000 ? 100 : 10)).toLocaleString('en-GB') : v >= 10 ? Math.round(v) : v.toFixed(1);
+  return [p[3].toUpperCase(), 'A ' + cls[1] + ' star, class ' + cls[0], [['From home', (p[4] < 100 ? '' : 'about ') + n(p[4]) + ' light-years'], ['Brightness', 'about ' + n(L) + ' × the Sun, in visible light'],
+    ['Surface', 'about ' + (Math.round(T / 100) * 100).toLocaleString('en-GB') + ' K'], ['Seen from Earth', 'magnitude ' + p[2].toFixed(1)]], 'Worked out from its colour and brightness, so treat these as estimates.'];
+}
+const infoCv = document.createElement('canvas'); infoCv.width = 896; infoCv.height = 560;
+const infoCx = infoCv.getContext('2d'), infoTex = textTexture(infoCv), infoVao = board([1.25, 1.5, -1.5], 1.0, 0.625);
+let infoKey = '', infoOn = false;
+function drawInfo() {
+  const key = G.i >= 0 ? 'g' + G.i : S.at >= 0 ? 's' + S.at : ''; infoOn = key !== ''; if (key === infoKey || !infoOn) return; infoKey = key;
+  const [title, sub, rows, note] = G.i >= 0 ? FACTS[G.i] : starFacts(S.at), x = infoCx, T = 'rgba(70,215,230,', A = '#ffa64a'; sheetBase(x, 896, 560);
+  x.fillStyle = '#e6f2ff'; x.font = '300 46px ' + FONT; spc(x, '0.2em'); x.fillText(title, 44, 70);
+  x.fillStyle = A; x.font = '500 20px ' + FONT; spc(x, '0.12em'); x.fillText(sub.toUpperCase(), 46, 122);
+  x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(44, 154); x.lineTo(852, 154); x.stroke();
+  let y = 198; for (const [a, b] of rows) { x.fillStyle = T + '.7)'; x.font = '400 23px ' + FONT; spc(x, '0.03em'); x.fillText(a, 46, y); x.fillStyle = '#e6f2ff'; x.fillText(b, 350, y); y += 50; }
+  x.fillStyle = T + '.6)'; x.font = 'italic 400 22px ' + FONT; x.fillText(note, 46, 506);
+  gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, infoCv); gl.generateMipmap(gl.TEXTURE_2D);
+}
+// tags: short words that float in the room and always face you (planet names in the model, and what the trigger will do)
+const tagProg = program(`
+  in vec3 aPos; in vec2 aUV; uniform mat4 uPV; uniform float uFloor; out vec2 vUV; void main(){ vUV = aUV; gl_Position = uPV*vec4(aPos.x, aPos.y+uFloor, aPos.z, 1.); }`, `
+  uniform sampler2D uTex; uniform vec3 uCol; in vec2 vUV; out vec4 o; void main(){ o = vec4(uCol*texture(uTex, vUV).a, 1.); }`);
+const TAGS = ['MERCURY', 'VENUS', 'EARTH', 'MARS', 'JUPITER', 'SATURN', 'URANUS', 'NEPTUNE', '', 'SUN',
+  'press', 'travel there', 'bring it here', 'hold to grab', 'zoom in', 'tap: zoom in   ·   hold: move the model', 'bring up Earth'], tagW = [];
+const H_PRESS = 10, H_TRAVEL = 11, H_BRING = 12, H_GRAB = 13, H_ZOOM = 14, H_SUN = 15, H_EARTH = 16;
+let tagTex; { const cv = document.createElement('canvas'); cv.width = 1024; cv.height = TAGS.length * 48; const x = cv.getContext('2d'); x.fillStyle = '#fff'; x.textBaseline = 'middle';
+  TAGS.forEach((t, i) => { x.font = (i < 10 ? '500 30px ' : '400 30px ') + FONT; spc(x, i < 10 ? '0.2em' : '0.06em'); x.fillText(t, 4, i * 48 + 25); tagW[i] = Math.ceil(x.measureText(t).width) + 8; });
+  tagTex = textTexture(cv); }
+// compass letters inlaid in the floor near the rim, read from the middle of the deck (north is where the console stands)
+let compassTex, compassVao; { const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256; const x = cv.getContext('2d'), v = [];
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  ['N', 'E', 'S', 'W', 'NE', 'SE', 'SW', 'NW'].forEach((t, i) => { const main = i < 4, cx = (i % 4) * 128 + 64, cy = (i >> 2) * 128 + 64, az = (main ? i * 90 : (i - 4) * 90 + 45) * D;
+    x.font = (main ? '500 96px ' : '400 54px ') + FONT; spc(x, main ? '0px' : '0.06em'); x.fillText(t, cx, cy + 4);
+    const o = [Math.sin(az), -Math.cos(az)], r = [Math.cos(az), Math.sin(az)], R = 2.17, h = 0.3, u0 = (i % 4) / 4, v0 = (i >> 2) / 2;
+    for (const [a, b, uu, vv] of [[-1, 1, 0, 0], [1, 1, 1, 0], [-1, -1, 0, 1], [1, -1, 1, 1]])
+      v.push(o[0] * R + r[0] * a * h / 2 + o[0] * b * h / 2, 0.004, o[1] * R + r[1] * a * h / 2 + o[1] * b * h / 2, u0 + uu / 4, v0 + vv / 2); });
+  compassTex = textTexture(cv); compassVao = vao(tagProg, new Float32Array(v), [['aPos', 3], ['aUV', 2]], quadIndex(8)); }
+const tagData = new Float32Array(12 * 20), tagVao = vao(tagProg, tagData, [['aPos', 3], ['aUV', 2]], quadIndex(12), gl.DYNAMIC_DRAW);
+let tagCount = 0;
+function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text height in metres }]
+  const list = hints.slice(0, 3);
+  if (G.i === SYS && !G.anim) { const h = Math.max(0.022, 0.034 * G.rad);
+    for (const b of [SUN, 0, 1, 2, 3, 4, 5, 6, 7]) { const c = add3(G.pos, qrot(G.q, sysLocal(b, G.simT)), G.rad); list.push({ p: [c[0], c[1] + sysSize(b) * G.rad + h * 1.1, c[2]], k: b, h }); } }
+  tagCount = 0;
+  for (const t of list) { const n = norm(add3(S.head, t.p, -1)), r = norm(cross([0, 1, 0], n)), u = cross(n, r), w = t.h * tagW[t.k] / 48, v0 = t.k * 48 / (TAGS.length * 48), v1 = (t.k + 1) * 48 / (TAGS.length * 48), u1 = tagW[t.k] / 1024;
+    [[-1, 1, 0, v0], [1, 1, u1, v0], [-1, -1, 0, v1], [1, -1, u1, v1]].forEach(([x, y, uu, vv], j) =>
+      tagData.set([t.p[0] + r[0] * x * w / 2 + u[0] * y * t.h / 2, t.p[1] + r[1] * x * w / 2 + u[1] * y * t.h / 2, t.p[2] + r[2] * x * w / 2 + u[2] * y * t.h / 2, uu, vv], (tagCount * 4 + j) * 5));
+    tagCount++; }
+  if (tagCount) { gl.bindBuffer(gl.ARRAY_BUFFER, tagVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, tagData); }
+}
+function triggerHint(c, off) {    // what would the trigger do for this hand right now? (same order as the trigger itself)
+  if (panelHit(c.o, c.d) && !hitsGlobe(c.o, c.d, c.gp)) return H_PRESS;
+  const sb = sysBodyAt(c.o, c.d); if (sb >= 0) return sb === SUN ? H_SUN : H_ZOOM;
+  if (hitsGlobe(c.o, c.d, c.gp)) return H_GRAB;
+  const i = planetAt(c.d, off); if (i >= 0) return i === 2 ? H_EARTH : H_BRING;
+  return S.pick >= 0 && S.pick !== S.at && S.pickAmt > 0.5 && !S.warp ? H_TRAVEL : -1;
+}
 
 // ───────────── Sound: everything is generated, no audio files ─────────────
 const Snd = { ctx: null, muted: false, lastChime: 0 };
@@ -905,7 +998,7 @@ const S = window.S = {
   pick: -1, pickAmt: 0,              // the star you are pointing at
   pos: [0, 0, 0], fdir: [0, 0, 1], fspeed: 0, warp: null, at: -1, trail: [0, 0, 0], streak: 0, away: 0, home: 1,   // where you are among the stars (parsecs from the Sun), and how fast you are going (light-years per second)
   pdirs: planetDirs(Date.now()),
-  floorY: -1.6, hover: null, head: [0, 0, 0],         // floor height in the current space; where a hand points on the console
+  floorY: -1.6, hover: null, head: [0, 0, 0], helpOn: false,         // floor height in the current space; where a hand points on the console
 
   yaw: 0, pitch: 35 * D, fov: 70 * D,
   meteor: null, nextMeteor: 22,
@@ -1083,7 +1176,12 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.useProgram(panelProg.p); gl.uniformMatrix4fv(panelProg.u.uPV, false, PVF); gl.uniform1f(panelProg.u.uFloor, S.floorY); gl.uniform1i(panelProg.u.uTex, 0);
   gl.uniform3f(panelProg.u.uHover, S.hover ? S.hover[0] : 0, S.hover ? S.hover[1] : 0, S.hover ? 1 : 0);
   gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.bindVertexArray(panelVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+  gl.uniform3f(panelProg.u.uHover, 0, 0, 0); drawInfo();
+  if (S.helpOn) { gl.bindTexture(gl.TEXTURE_2D, helpTex); gl.bindVertexArray(helpVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
+  if (infoOn) { gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.bindVertexArray(infoVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
+  gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 48, gl.UNSIGNED_INT, 0);
   if (S.at >= 0) {                                   // you have stopped at a star: here it is as a sun
     if (!starTex && !starTexAsked) { starTexAsked = true; loadTex('data:image/webp;base64,' + STEX, t => starTex = t); }
     if (starTex) { const i = S.at, dir = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), c = starColour(PICK[i][5]);
@@ -1095,6 +1193,8 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); } }
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
   drawRoom(PVF, eye);
+  if (tagCount) { gl.enable(gl.DEPTH_TEST); gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, 0); gl.uniform3f(tagProg.u.uCol, .72, .95, 1);
+    gl.bindTexture(gl.TEXTURE_2D, tagTex); gl.bindVertexArray(tagVao.v); gl.drawElements(gl.TRIANGLES, tagCount * 6, gl.UNSIGNED_INT, 0); }
   if (viewFull && beamCount) { gl.useProgram(beam.p); gl.uniformMatrix4fv(beam.u.uPV, false, PVF);
     gl.bindVertexArray(beamVao.v); gl.drawArrays(gl.LINES, 0, beamCount * 2); }
   gl.disable(gl.DEPTH_TEST); gl.depthMask(true);
@@ -1113,7 +1213,7 @@ function flatFrame(now) {
   const th = Math.tan(S.fov / 2), mray = mouse ? norm([f[0] + r[0] * mouse[0] * th * w / h + u[0] * mouse[1] * th,
     f[1] + r[1] * mouse[0] * th * w / h + u[1] * mouse[1] * th, f[2] + r[2] * mouse[0] * th * w / h + u[2] * mouse[1] * th]) : null;
   S.cam = { f, r, u }; S.mray = mray; S.floorY = -1.6; S.head = [0, 0, 0]; S.hover = mray ? panelHit([0, 0, 0], mray) : null;
-  updateGlobe(dt);
+  updateGlobe(dt); updateTags([]);
   update(dt, f, keyStick, keyStickY, mray && !S.hover && !hitsGlobe([0, 0, 0], mray) ? [mray] : [], flyKey && !S.warp ? { dir: f, hold: S.time - flyKey } : null);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, w, h);
   drawScene(perspective(S.fov, w / h, 0.1, 100), V, h * (70 * D) / S.fov, V, [0, 0, 0]);
@@ -1139,6 +1239,7 @@ canvas.addEventListener('pointerleave', () => mouse = null);
 canvas.addEventListener('wheel', e => { e.preventDefault(); if (G.i >= 0 && !G.anim) { G.rad = Math.max(0.05, Math.min(0.75, G.rad * (1 - Math.sign(e.deltaY) * 0.08))); return; }
   S.fov = Math.max(20 * D, Math.min(100 * D, S.fov * (1 + Math.sign(e.deltaY) * 0.08))); e.preventDefault(); }, { passive: false });
 addEventListener('keydown', e => { const k = e.key.toLowerCase(); if (k !== 'm') startAudio();
+  if (k === '?' || k === '/') S.helpOn = !S.helpOn;
   if (k === 'm') toggleMute(); else if (k === 'c') cycleMode(); else if (k === 'g') toggleGround(); else if (k === 'n') backToNow();
   else if (k === 'w') { if (!flyKey) flyKey = S.time || 1e-6; } else if (k === 'h') goHome();
   else if (k === 'b') dismiss(); else if (k >= '1' && k <= '8') summonFlat(+k - 1); else if (k === '9') summonSystem(); else if (k === '0') summonFlat(SUN);
@@ -1210,6 +1311,8 @@ vrBtn.addEventListener('click', async () => {
       let fly = null; if (!S.warp) for (const [src, t0] of pending) { const c = ctl.get(src); if (c && S.time - t0 >= 0.35) { fly = { dir: c.d, hold: S.time - t0 - 0.35 }; break; } }
       updateGlobe(dt);
       update(dt, norm([-m[8], -m[9], -m[10]]), Math.abs(stick) > Math.abs(stickY) ? stick : 0, Math.abs(stickY) > 0.15 && Math.abs(stickY) >= Math.abs(stick) ? stickY : 0, rays, fly);
+      const hints = []; for (const c of ctl.values()) { const k = triggerHint(c, add3(c.o, anchor, -1)); if (k >= 0) hints.push({ p: add3(add3(c.o, c.d, 0.32), [0, 0.035, 0]), k, h: 0.016 }); }
+      updateTags(hints);
       const layer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
       for (const view of pose.views) {
