@@ -140,6 +140,13 @@ function vao(prog, data, layout, index, usage) {
 const quadIndex = n => { const ix = new Uint32Array(n * 6);
   for (let i = 0; i < n; i++) ix.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3], i * 6); return ix; };
 
+// Depth. Real stars are too far away for two eyes to tell apart, so the sky is shown as a scale model:
+// a star d parsecs away hangs 2.5·d^0.42 metres from you (Alpha Centauri about 3 m, Vega 6 m, the far dust 30 to 70 m).
+const DEPTH = `
+float modelR(float pc){ return clamp(2.5*pow(pc, .42), .4, 90.); }
+`;
+const modelR = pc => Math.max(0.4, Math.min(90, 2.5 * Math.pow(pc, 0.42)));
+const PARALLAX = 0.35;           // how much of your own head movement the star model ignores (0 = stars glued to your head, 1 = fixed in the room)
 const HORIZON = `
 float hor(vec3 w){ float az = atan(w.x, -w.z);
   return 0.020 + 0.008*sin(az*5.+1.3) + 0.005*sin(az*13.+.7) + 0.003*sin(az*31.+2.1); }
@@ -224,8 +231,8 @@ const bgVao = gl.createVertexArray();
 // ───────────── Stars ─────────────
 const stars = program(`
   in vec3 aDir; in vec2 aMB;                       // aDir: position in parsecs (Sun at the origin); aMB: absolute magnitude, colour index
-  uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uCam; uniform float uPx, uTime, uGround, uReveal, uMirror;
-  out vec3 vCol; out float vSpike;` + HORIZON + `
+  uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uCam, uEye; uniform float uPx, uTime, uGround, uReveal, uMirror;
+  out vec3 vCol; out float vSpike;` + HORIZON + DEPTH + `
   void main(){
     vec3 rel = aDir-uCam; float dist = max(length(rel), 1e-4);
     vec3 d = uSky*(rel/dist); float mag = max(aMB.x + 2.1714724*log(dist/10.), -5.), bv = aMB.y;   // brightness follows from how far away you are
@@ -241,7 +248,7 @@ const stars = program(`
     vec3 c = bv < .45 ? mix(vec3(.42,.60,1.), vec3(1.,.98,.95), clamp((bv+.3)/.75,0.,1.))
                       : mix(vec3(1.,.98,.95), vec3(1.,.52,.22), clamp((bv-.45)/1.2,0.,1.));
     vCol = c*I; vSpike = smoothstep(2.4, .2, mag);
-    gl_Position = I < .004 ? vec4(2., 2., 2., 1.) : uPV*vec4(d*10., 1.);
+    gl_Position = I < .004 ? vec4(2., 2., 2., 1.) : uPV*vec4(d*modelR(dist)-uEye, 1.);   // each eye sees the star from its own place
     gl_PointSize = max(2., uPx*(2.2+15.*pow(2.512, -.42*mag)));
   }`, `
   in vec3 vCol; in float vSpike; out vec4 o;
@@ -278,10 +285,11 @@ let starCount = 0, starVao;
 // ───────────── Constellation lines (and the shooting star) ─────────────
 const lines = program(`
   in vec3 aA; in vec3 aB; in vec2 aP; in float aId;
-  uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uCam; uniform float uW, uGround, uHi, uHiAmt, uAlpha, uMeteor, uMirror, uFocus, uAway;
-  out float vSide; out float vA; out float vHi;` + HORIZON + `
+  uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uCam, uEye; uniform float uW, uGround, uHi, uHiAmt, uAlpha, uMeteor, uMirror, uFocus, uAway;
+  out float vSide; out float vA; out float vHi;` + HORIZON + DEPTH + `
+  vec3 seen(vec3 p){ vec3 r = p-uCam; float l = max(length(r), 1e-4); return normalize(uSky*(r/l)*modelR(l)-uEye); }
   void main(){
-    vec3 a = uSky*normalize(aA-uCam), b = uSky*normalize(aB-uCam), n = normalize(cross(a, b));   // the line joins two real stars, seen from where you are
+    vec3 a = seen(aA), b = seen(aB), n = normalize(cross(a, b));   // the line joins two real stars, seen from where you are
     float foc = abs(aId-uFocus) < .5 ? 1. : 0.;                    // far from home, the constellation you last looked at stays lit and the rest step back
     float hi = max(abs(aId-uHi) < .5 ? uHiAmt : 0., foc*uAway);
     float ang = acos(clamp(dot(a, b), -1., 1.));
@@ -409,6 +417,7 @@ let labelVao, labelQuads = 0, labelTex;
   items.push({ text: 'Stick left / right: time travel   ·   up / down: drift speed while floating   ·   A / X: now', dir: horizDir(0, 18), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
   items.push({ text: 'Planets: trigger calls one to you   ·   hold trigger to grab and turn   ·   two hands resize   ·   B / Y sends it home', dir: horizDir(0, 15), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
   items.push({ text: 'Earth is under your feet: point down and pull the trigger', dir: horizDir(0, 12), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
+  items.push({ text: 'The console in front of you calls planets and switches views: point at it and pull the trigger', dir: horizDir(0, 27), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
   items.push({ text: 'Hold the trigger on empty sky to fly out among the stars   ·   A / X brings you home', dir: horizDir(0, 24), kind: 3, id: -1, h: 1.7, sp: '0.08em', font: '400 36px ' + FONT, dy: 0 });
 
   const W = 2048, H = 2048, ROW = 56, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -450,7 +459,7 @@ function drawClock(ms) {
 }
 
 // ───────────── Touch a star: point at one and it tells you how old its light is ─────────────
-const pickDir = PICK.map(p => eq(p[0], p[1]));
+const pickDir = PICK.map(p => eq(p[0], p[1])), pickRad = PICK.map(p => modelR(p[4] / 3.26156));
 const cardCv = document.createElement('canvas'); cardCv.width = 1024; cardCv.height = 256;
 const cardCx = cardCv.getContext('2d'), cardTex = textTexture(cardCv), cardData = new Float32Array(36);
 const cardVao = vao(labels, cardData, [['aDir', 3], ['aCorner', 2], ['aUV', 2], ['aMeta', 2]], quadIndex(1), gl.DYNAMIC_DRAW);
@@ -569,7 +578,7 @@ function summon(i, target, fromDir, rad, eye) {
   if (G.tex) gl.deleteTexture(G.tex);
   const te = norm(add3(eye, target, -1)), rt = norm(cross([0, 1, 0], te));          // the light comes over your shoulder, then stays put in the room
   G.light = norm([te[0] * 0.7 + rt[0] * 0.5, te[1] * 0.7 + 0.5, te[2] * 0.7 + rt[2] * 0.5]);
-  const p = PLANETS[i]; Object.assign(G, { i, tex: null, grabs: [], q: qaxis([0, 0, 1], -p.tilt * D), spin: p.spin, rad: 0.12, pos: add3(target, fromDir, 40),
+  const p = PLANETS[i]; Object.assign(G, { i, tex: null, grabs: [], radT: 0, q: qaxis([0, 0, 1], -p.tilt * D), spin: p.spin, rad: 0.12, pos: add3(target, fromDir, 40),
     anim: { out: false, t: 0, dur: 1.8, from: add3(target, fromDir, 40), to: target, r0: 0.12, r1: rad } });
   loadTex('data:image/webp;base64,' + PTEX[i], t => { if (G.i === i) G.tex = t; else gl.deleteTexture(t); });
   whoosh(1.3);
@@ -584,9 +593,9 @@ function hitsGlobe(o, d, hand) {
   if (hand && dist3(hand, G.pos) < G.rad + 0.12) return true;
   const oc = add3(G.pos, o, -1), t = dot(oc, d); return t > 0 && dot(oc, oc) - t * t < G.rad * G.rad * 1.3;
 }
-function planetAt(d) {           // which planet does this world direction point at? Earth is straight down
-  const e = unSky(S.sky, d); let best = -1, bd = Math.cos(3.5 * D);
-  for (let i = 0; i < PLANETS.length && S.away < 0.02; i++) { if (i === 2 || i === G.i) continue; const dp = dot(S.pdirs[i], e);
+function planetAt(d, off) {      // which planet does this ray point at? Earth is straight down
+  const e = unSky(S.sky, d), o = unSky(S.sky, off || [0, 0, 0]), R = modelR(10); let best = -1, bd = Math.cos(3.5 * D);
+  for (let i = 0; i < PLANETS.length && S.away < 0.02; i++) { if (i === 2 || i === G.i) continue; const q = S.pdirs[i], dp = dot(norm([q[0] * R - o[0], q[1] * R - o[1], q[2] * R - o[2]]), e);
     if (dp > bd && !(S.ground > 0.5 && applySky(S.sky, S.pdirs[i])[1] < 0.03)) { bd = dp; best = i; } }
   return best < 0 && d[1] < -0.55 && G.i !== 2 ? 2 : best;
 }
@@ -602,14 +611,111 @@ function updateGlobe(dt) {
     const g2 = G.grabs[1], c2 = g2 && ctl.get(g2.src);
     if (c2) G.rad = clamp(g2.rad0 * dist3(c.gp, c2.gp) / g2.d0);                 // two hands: pull apart to grow it
     else if (Math.abs(c.sy) > 0.15) G.rad = clamp(G.rad * Math.exp(-c.sy * dt * 1.4)); }
-  else G.q = qmul(G.q, qaxis([0, 1, 0], dt * G.spin));                           // left alone, it turns on its own axis
+  else { G.q = qmul(G.q, qaxis([0, 1, 0], dt * G.spin));                         // left alone, it turns on its own axis
+    if (G.radT) { G.rad += (G.radT - G.rad) * Math.min(1, dt * 5); if (Math.abs(G.rad - G.radT) < 0.002) G.radT = 0; } }
 }
-function grabStart(src) { const c = ctl.get(src); if (!c) return;
+function grabStart(src) { const c = ctl.get(src); if (!c) return; G.radT = 0;
   if (!G.grabs.length) G.grabs = [grabOf(src, c)];
   else if (G.grabs.length === 1 && G.grabs[0].src !== src) { const c1 = ctl.get(G.grabs[0].src); if (c1) G.grabs.push({ src, d0: Math.max(0.05, dist3(c.gp, c1.gp)), rad0: G.rad }); } }
 function grabEnd(src) { if (!G.grabs.some(g => g.src === src)) return;
   const rest = G.grabs.filter(g => g.src !== src); G.grabs = [];
   if (rest.length) { const c = ctl.get(rest[0].src); if (c) G.grabs = [grabOf(rest[0].src, c)]; } }
+
+// ───────────── The observation deck: a glass platform, a railing and a control console ─────────────
+const deck = program(`
+  in vec3 aPos; in vec3 aUVK; uniform mat4 uPV; uniform float uFloor; out vec2 vUV; out float vK;
+  void main(){ vUV = aUVK.xy; vK = aUVK.z; gl_Position = uPV*vec4(aPos.x, aPos.y+uFloor, aPos.z, 1.); }`, `
+  in vec2 vUV; in float vK; out vec4 o;
+  float line(float d, float w){ return 1.-smoothstep(w, w+fwidth(d)*1.5, abs(d)); }
+  void main(){
+    vec3 teal = vec3(.22,.80,.86), amber = vec3(1.,.60,.24); vec4 c;
+    if (vK < .5) {                                     // the floor: dark glass with inlaid light, so the lake and stars still show through
+      float r = length(vUV), a = atan(vUV.y, vUV.x)/6.2831853;
+      float seg = r < .55 ? 0. : r < 1.25 ? 6. : r < 1.95 ? 12. : 24.;
+      float g = line(r-.55, .005) + line(r-1.25, .005) + line(r-1.95, .005) + line(r-.12, .008)*.6;
+      if (seg > 0.) g += line(abs(fract(a*seg)-.5)/seg*6.2831853*r, .004)*.6;
+      float ticks = r > 2.34 && r < 2.44 ? line(abs(fract(a*72.)-.5)/72.*6.2831853*r, .004) : 0.;
+      float rim = line(r-2.52, .018);
+      c = vec4(vec3(.010,.017,.026) + teal*.20*g + teal*.28*ticks + amber*.55*rim, .74 + .22*clamp(g+rim+ticks, 0., 1.));
+      if (r > 2.6) discard;
+    } else if (vK < 1.5) c = vec4(teal*.42, 1.);                                   // hand rail
+    else if (vK < 2.5) c = vec4(vec3(.020,.027,.036) + vec3(.035,.045,.055)*vUV.y, 1.); // posts, pedestal, panel frame
+    else c = vec4(vec3(.012,.017,.024) + amber*.45*line(vUV.y-.8, .06), 1.);       // the edge of the platform
+    o = c;
+  }`);
+const panelProg = program(`
+  in vec3 aPos; in vec2 aUV; uniform mat4 uPV; uniform float uFloor; out vec2 vUV;
+  void main(){ vUV = aUV; gl_Position = uPV*vec4(aPos.x, aPos.y+uFloor, aPos.z, 1.); }`, `
+  uniform sampler2D uTex; uniform vec3 uHover; in vec2 vUV; out vec4 o;
+  void main(){ float d = length((vUV-uHover.xy)*vec2(2., 1.));
+    o = vec4(texture(uTex, vUV).rgb + vec3(.25,.85,.95)*uHover.z*(smoothstep(.07, 0., d)*.30 + smoothstep(.016, .008, d)*.7), .93); }`);
+// console geometry (heights are above the floor): a slanted panel on a pedestal, due north of where you stand
+const PANEL = { c: [0, 1.02, -0.80], r: [1, 0, 0], u: [0, Math.sin(38 * D), -Math.cos(38 * D)], w: 0.96, h: 0.48 };
+PANEL.n = cross(PANEL.r, PANEL.u);
+const HOLO = [0, 1.58, -1.5];      // where a planet called from the console appears
+let deckVao, deckCount, panelVao;
+{
+  const v = [], ix = []; const quad = (p0, p1, p2, p3, k, uv) => { const b = v.length / 6; uv = uv || [[0, 0], [1, 0], [0, 1], [1, 1]];
+    [p0, p1, p2, p3].forEach((p, i) => v.push(p[0], p[1], p[2], uv[i][0], uv[i][1], k)); ix.push(b, b + 1, b + 2, b + 2, b + 1, b + 3); };
+  quad([-2.6, 0, -2.6], [2.6, 0, -2.6], [-2.6, 0, 2.6], [2.6, 0, 2.6], 0, [[-2.6, -2.6], [2.6, -2.6], [-2.6, 2.6], [2.6, 2.6]]);
+  const N = 72; for (let i = 0; i < N; i++) { const a0 = i / N * Math.PI * 2, a1 = (i + 1) / N * Math.PI * 2, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+    if (Math.abs(((a0 + a1) / 2 + Math.PI / 2) % (Math.PI * 2)) > 0.001)                 // rail all the way round
+      quad([c0 * 2.5, 1.035, s0 * 2.5], [c1 * 2.5, 1.035, s1 * 2.5], [c0 * 2.5, 1.0, s0 * 2.5], [c1 * 2.5, 1.0, s1 * 2.5], 1);
+    quad([c0 * 2.6, 0, s0 * 2.6], [c1 * 2.6, 0, s1 * 2.6], [c0 * 2.6, -0.14, s0 * 2.6], [c1 * 2.6, -0.14, s1 * 2.6], 3, [[0, 1], [1, 1], [0, 0], [1, 0]]);
+    if (i % 6 === 3) { const am = (a0 + a1) / 2, c = Math.cos(am), s2 = Math.sin(am), t = [-s2 * 0.018, c * 0.018];            // posts
+      quad([c * 2.5 - t[0], 1.0, s2 * 2.5 - t[1]], [c * 2.5 + t[0], 1.0, s2 * 2.5 + t[1]], [c * 2.5 - t[0], 0, s2 * 2.5 - t[1]], [c * 2.5 + t[0], 0, s2 * 2.5 + t[1]], 2, [[0, 1], [1, 1], [0, 0], [1, 0]]); } }
+  const P = PANEL, at = (x, y, off) => [P.c[0] + P.r[0] * x + P.u[0] * y + P.n[0] * off, P.c[1] + P.r[1] * x + P.u[1] * y + P.n[1] * off, P.c[2] + P.r[2] * x + P.u[2] * y + P.n[2] * off];
+  quad(at(-P.w / 2 - .02, P.h / 2 + .02, -.006), at(P.w / 2 + .02, P.h / 2 + .02, -.006), at(-P.w / 2 - .02, -P.h / 2 - .02, -.006), at(P.w / 2 + .02, -P.h / 2 - .02, -.006), 2);   // frame behind the panel
+  for (const [x0, z0, x1, z1] of [[-.09, -.74, .09, -.74], [-.09, -.92, .09, -.92], [-.09, -.92, -.09, -.74], [.09, -.92, .09, -.74]])                                   // pedestal
+    quad([x0, 0.98, z0], [x1, 0.98, z1], [x0, 0, z0], [x1, 0, z1], 2, [[0, 1], [1, 1], [0, 0], [1, 0]]);
+  deckVao = vao(deck, new Float32Array(v), [['aPos', 3], ['aUVK', 3]], new Uint32Array(ix)); deckCount = ix.length;
+  const pv = []; for (const [x, y, uu, vv] of [[-1, 1, 0, 0], [1, 1, 1, 0], [-1, -1, 0, 1], [1, -1, 1, 1]]) pv.push(...at(x * P.w / 2, y * P.h / 2, 0), uu, vv);
+  panelVao = vao(panelProg, new Float32Array(pv), [['aPos', 3], ['aUV', 2]], quadIndex(1));
+}
+// what is on the console
+const panelCv = document.createElement('canvas'); panelCv.width = 1024; panelCv.height = 512;
+const panelCx = panelCv.getContext('2d'), panelTex = textTexture(panelCv);
+const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'SEND BACK'], ['view', 'FIGURES'], ['ground', 'LAKE / SPACE'], ['home', 'HOME · NOW']];
+const DISC = [['#8f8a86', '#3e3b39'], ['#f2deb0', '#8a6f3c'], ['#4f8fe0', '#12305e'], ['#e0683c', '#5e2414'], ['#e2c39a', '#7a5a3a'], ['#ecd9a4', '#7d6a3e'], ['#a9e6ea', '#3f7f88'], ['#4a6cf0', '#16246e']];
+let panelState = '';
+function drawPanel() {
+  const state = G.i + '|' + S.mode + '|' + S.groundT; if (state === panelState) return; panelState = state;
+  const x = panelCx, T = 'rgba(70,215,230,', A = '#ffa64a';
+  x.fillStyle = '#040910'; x.fillRect(0, 0, 1024, 512); x.textBaseline = 'middle'; x.lineWidth = 2;
+  x.strokeStyle = T + '.55)'; x.strokeRect(14, 14, 996, 484);
+  x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(40, 84); x.lineTo(984, 84); x.moveTo(40, 312); x.lineTo(984, 312); x.stroke();
+  const sp = v => { try { x.letterSpacing = v; } catch (e) {} };
+  x.textAlign = 'left'; x.fillStyle = T + '.95)'; x.font = '300 30px ' + FONT; sp('0.34em'); x.fillText('OBSERVATION DECK', 40, 50);
+  x.textAlign = 'right'; x.fillStyle = A; x.font = '500 18px ' + FONT; sp('0.2em'); x.fillText(PLACE.toUpperCase(), 984, 50);
+  x.textAlign = 'left'; x.fillStyle = T + '.5)'; x.font = '500 15px ' + FONT; x.fillText('CALL A PLANET', 40, 110); x.fillText('CONTROLS', 40, 338);
+  PLANETS.forEach((p, i) => { const cx = 92 + i * 120, cy = 196, R = 44, g = x.createRadialGradient(cx - 14, cy - 16, 4, cx, cy, R);
+    g.addColorStop(0, DISC[i][0]); g.addColorStop(1, DISC[i][1]);
+    if (p.ring) { x.strokeStyle = 'rgba(236,217,164,.8)'; x.lineWidth = 5; x.beginPath(); x.ellipse(cx, cy, R * 1.5, R * 0.36, -0.3, 0, Math.PI * 2); x.stroke(); }
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.fill();
+    if (p.ring) { x.save(); x.beginPath(); x.rect(cx - 80, cy, 160, 60); x.clip(); x.strokeStyle = 'rgba(236,217,164,.8)'; x.lineWidth = 5; x.beginPath(); x.ellipse(cx, cy, R * 1.5, R * 0.36, -0.3, 0, Math.PI * 2); x.stroke(); x.restore(); }
+    x.lineWidth = 2.5; x.strokeStyle = i === G.i ? A : T + '.35)'; x.beginPath(); x.arc(cx, cy, R + 9, 0, Math.PI * 2); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = i === G.i ? A : T + '.9)'; x.font = '500 16px ' + FONT; sp('0.16em'); x.fillText(p.name.toUpperCase(), cx, 274); });
+  PILLS.forEach(([id, label], i) => { const px = 40 + i * 162, on = (id === 'back' && G.i >= 0) || (id === 'ground' && !S.groundT);
+    x.lineWidth = 2; x.strokeStyle = on ? A : T + '.6)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.06)';
+    x.beginPath(); x.roundRect(px, 364, 148, 72, 14); x.fill(); x.stroke();
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 17px ' + FONT; sp('0.12em'); x.fillText(label, px + 74, 401); });
+  x.textAlign = 'left'; x.fillStyle = T + '.4)'; x.font = '400 14px ' + FONT; sp('0.14em'); x.fillText('POINT AND PULL THE TRIGGER', 40, 470);
+  gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panelCv); gl.generateMipmap(gl.TEXTURE_2D);
+}
+function panelHit(o, d) {         // where does a ray meet the console? returns [u, v] or null
+  const P = PANEL, c = [P.c[0], P.c[1] + S.floorY, P.c[2]], dn = dot(d, P.n); if (Math.abs(dn) < 1e-5) return null;
+  const t = dot(add3(c, o, -1), P.n) / dn; if (t <= 0 || t > 6) return null;
+  const q = add3(add3(o, d, t), c, -1), u = dot(q, P.r) / P.w + 0.5, v = 0.5 - dot(q, P.u) / P.h;
+  return u >= 0 && u <= 1 && v >= 0 && v <= 1 ? [u, v] : null;
+}
+function panelButton(uv) { const px = uv[0] * 1024, py = uv[1] * 512;
+  for (let i = 0; i < PLANETS.length; i++) if (Math.hypot(px - (92 + i * 120), py - 196) < 58 || (Math.abs(px - (92 + i * 120)) < 58 && py > 196 && py < 290)) return i;
+  if (py > 360 && py < 440) for (let i = 0; i < PILLS.length; i++) if (px > 40 + i * 162 && px < 188 + i * 162) return PILLS[i][0];
+  return null; }
+function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return; blip();
+  if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], b === 2 ? [0, -1, 0] : applySky(S.sky, S.pdirs[b]), 0.2, eye); }
+  else if (b === 'smaller' || b === 'larger') { if (G.i >= 0 && !G.anim) G.radT = Math.max(0.04, Math.min(2.5, (G.radT || G.rad) * (b === 'larger' ? 1.45 : 1 / 1.45))); }
+  else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround(); else { backToNow(); goHome(); } }
 
 // ───────────── Sound: everything is generated, no audio files ─────────────
 const Snd = { ctx: null, muted: false, lastChime: 0 };
@@ -649,6 +755,12 @@ function chime(i) {            // each constellation has its own note
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.06 * a, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
     o.connect(g); g.connect(Snd.bus); o.start(t); o.stop(t + dec + 0.1); });
 }
+function blip() {              // the console acknowledges
+  const ctx = Snd.ctx; if (!ctx || ctx.state !== 'running') return; const t = ctx.currentTime;
+  [[740, 0], [1110, 0.07]].forEach(([f, dl]) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = f;
+    g.gain.setValueAtTime(0, t + dl); g.gain.linearRampToValueAtTime(0.035, t + dl + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dl + 0.16);
+    o.connect(g); g.connect(Snd.bus); o.start(t + dl); o.stop(t + dl + 0.2); });
+}
 function ping() {              // a star answers
   const ctx = Snd.ctx; if (!ctx || ctx.state !== 'running') return;
   const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 1174.66;
@@ -676,6 +788,7 @@ const S = window.S = {
   pick: -1, pickAmt: 0,              // the star you are pointing at
   pos: [0, 0, 0], fdir: [0, 0, 1], fspeed: 0, homing: false, away: 0, home: 1,   // where you are among the stars (parsecs from the Sun), and how fast you are going (light-years per second)
   pdirs: planetDirs(Date.now()),
+  floorY: -1.6, hover: null,         // floor height in the current space; where a hand points on the console
 
   yaw: 0, pitch: 35 * D, fov: 70 * D,
   meteor: null, nextMeteor: 22,
@@ -738,8 +851,8 @@ function update(dt, forward, stick, stickY, rays, fly) {
   // which star is a hand (or the mouse) pointing at? brighter stars are easier to catch
   let pk = -1, ps = 2 * D; const c3 = Math.cos(3 * D);
   for (const ray of S.away < 0.3 ? rays || [] : []) { if (S.ground > 0.5 && ray[1] < 0.03) continue;
-    const r = unSky(S.sky, ray);
-    for (let i = 0; i < pickDir.length; i++) { const dp = dot(pickDir[i], r); if (dp < c3) continue;
+    const r = unSky(S.sky, ray), o = unSky(S.sky, ray.o || [0, 0, 0]);          // the hand is not at your eyes, and the stars are now near enough for that to matter
+    for (let i = 0; i < pickDir.length; i++) { const q = pickDir[i], k = pickRad[i], dp = dot(norm([q[0] * k - o[0], q[1] * k - o[1], q[2] * k - o[2]]), r); if (dp < c3) continue;
       const sc = Math.acos(Math.min(1, dp)) + PICK[i][2] * 0.25 * D - (i === S.pick ? 0.4 * D : 0); if (sc < ps) { ps = sc; pk = i; } } }
   if (pk !== S.pick) { S.pickAmt = ease(S.pickAmt, 0, 9); if (S.pickAmt < 0.05) { S.pick = pk; if (pk >= 0) { setCard(pk); ping(); } } }
   else S.pickAmt = ease(S.pickAmt, pk >= 0 ? 1 : 0, 5);
@@ -756,7 +869,8 @@ function update(dt, forward, stick, stickY, rays, fly) {
 }
 
 const IDENT3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-function drawScene(proj, viewRot, vpH, viewFull, eye) {
+function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
+  eoff = eoff || [0, 0, 0];
   const PV = mul4(proj, viewRot), reveal = -2.5 + S.intro * 1.1, mw = Math.min(1, Math.max(0, (S.intro - 5) / 8));
   gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
   gl.useProgram(bg.p); gl.uniformMatrix4fv(bg.u.uInvPV, false, inv4(PV)); gl.uniformMatrix3fv(bg.u.uSky, false, S.sky);
@@ -767,7 +881,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye) {
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
   gl.useProgram(stars.p); gl.uniformMatrix4fv(stars.u.uPV, false, PV); gl.uniformMatrix3fv(stars.u.uSky, false, S.sky);
   gl.uniform1f(stars.u.uPx, vpH / 1000); gl.uniform1f(stars.u.uTime, S.time); gl.uniform1f(stars.u.uGround, S.ground);
-  gl.uniform1f(stars.u.uReveal, reveal); gl.uniform3fv(stars.u.uCam, S.pos);
+  gl.uniform1f(stars.u.uReveal, reveal); gl.uniform3fv(stars.u.uCam, S.pos); gl.uniform3fv(stars.u.uEye, eoff);
   gl.uniform1f(stars.u.uMirror, 0);
   gl.bindVertexArray(starVao.v); gl.drawArrays(gl.POINTS, 0, starCount + DUST);
   if (S.ground > 0.01) { gl.uniform1f(stars.u.uMirror, 1); gl.drawArrays(gl.POINTS, 0, starCount + MIRROR_DUST); }
@@ -784,13 +898,13 @@ function drawScene(proj, viewRot, vpH, viewFull, eye) {
   gl.useProgram(lines.p); gl.uniformMatrix4fv(lines.u.uPV, false, PV); gl.uniform1f(lines.u.uGround, S.ground); gl.uniform1f(lines.u.uMirror, 0);
   const linesA = Math.max(S.linesA, (1 - S.home) * 0.6);     // away from home the lines always show, so you can watch them bend
   if (linesA > 0.003) {
-    gl.uniform3fv(lines.u.uCam, S.pos); gl.uniformMatrix3fv(lines.u.uSky, false, S.sky); gl.uniform1f(lines.u.uW, 0.0015); gl.uniform1f(lines.u.uMeteor, 0);
+    gl.uniform3fv(lines.u.uCam, S.pos); gl.uniform3fv(lines.u.uEye, eoff); gl.uniformMatrix3fv(lines.u.uSky, false, S.sky); gl.uniform1f(lines.u.uW, 0.0015); gl.uniform1f(lines.u.uMeteor, 0);
     gl.uniform1f(lines.u.uHi, S.hi); gl.uniform1f(lines.u.uHiAmt, S.hiAmt); gl.uniform1f(lines.u.uAlpha, linesA); gl.uniform1f(lines.u.uFocus, S.lastHi); gl.uniform1f(lines.u.uAway, 1 - S.home);
     gl.bindVertexArray(lineVao.v); gl.drawElements(gl.TRIANGLES, lineQuads * 6, gl.UNSIGNED_INT, 0);
     if (S.ground > 0.01) { gl.uniform1f(lines.u.uMirror, 1); gl.drawElements(gl.TRIANGLES, lineQuads * 6, gl.UNSIGNED_INT, 0); gl.uniform1f(lines.u.uMirror, 0); }
   }
   if (S.meteor) {
-    gl.uniform3f(lines.u.uCam, 0, 0, 0); gl.uniformMatrix3fv(lines.u.uSky, false, IDENT3); gl.uniform1f(lines.u.uW, 0.0028); gl.uniform1f(lines.u.uMeteor, 1);
+    gl.uniform3f(lines.u.uCam, 0, 0, 0); gl.uniform3f(lines.u.uEye, 0, 0, 0); gl.uniformMatrix3fv(lines.u.uSky, false, IDENT3); gl.uniform1f(lines.u.uW, 0.0028); gl.uniform1f(lines.u.uMeteor, 1);
     gl.uniform1f(lines.u.uHi, -99); gl.uniform1f(lines.u.uFocus, -99); gl.uniform1f(lines.u.uAway, 0); gl.uniform1f(lines.u.uHiAmt, 0); gl.uniform1f(lines.u.uAlpha, Math.min(1, (1.3 - S.meteor.t) * 4));
     gl.bindVertexArray(meteorVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
     if (S.ground > 0.01) { gl.uniform1f(lines.u.uMirror, 1); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); gl.uniform1f(lines.u.uMirror, 0); }
@@ -807,9 +921,17 @@ function drawScene(proj, viewRot, vpH, viewFull, eye) {
   if (S.pickAmt > 0.01) { gl.bindTexture(gl.TEXTURE_2D, cardTex); gl.bindVertexArray(cardVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   if (S.away > 0.3) { gl.uniform1f(labels.u.uPick, Math.min(1, (S.away - 0.3) / 2) * 0.9); gl.bindTexture(gl.TEXTURE_2D, sunTex); gl.bindVertexArray(sunVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   const PVF = mul4(proj, viewFull || viewRot);
+  drawPanel();
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(deck.p); gl.uniformMatrix4fv(deck.u.uPV, false, PVF); gl.uniform1f(deck.u.uFloor, S.floorY);
+  gl.bindVertexArray(deckVao.v); gl.drawElements(gl.TRIANGLES, deckCount, gl.UNSIGNED_INT, 0);
+  gl.useProgram(panelProg.p); gl.uniformMatrix4fv(panelProg.u.uPV, false, PVF); gl.uniform1f(panelProg.u.uFloor, S.floorY); gl.uniform1i(panelProg.u.uTex, 0);
+  gl.uniform3f(panelProg.u.uHover, S.hover ? S.hover[0] : 0, S.hover ? S.hover[1] : 0, S.hover ? 1 : 0);
+  gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.bindVertexArray(panelVao.v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
+  gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
   if (G.i >= 0 && G.tex) {                            // the planet in the room is a real object: it has depth and a lit side
     const M = modelMatrix(G.q, G.pos, G.rad), P = PLANETS[G.i];
-    gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
     gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PVF); gl.uniformMatrix4fv(globe.u.uModel, false, M);
     gl.uniform3fv(globe.u.uLight, G.light); gl.uniform3fv(globe.u.uEye, eye || [0, 0, 0]); gl.uniform3fv(globe.u.uAtm, P.atm); gl.uniform1i(globe.u.uTex, 0);
     gl.bindTexture(gl.TEXTURE_2D, G.tex); gl.bindVertexArray(sphereVao.v); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0);
@@ -836,9 +958,9 @@ function flatFrame(now) {
   const V = new Float32Array([r[0], u[0], -f[0], 0, r[1], u[1], -f[1], 0, r[2], u[2], -f[2], 0, 0, 0, 0, 1]);
   const th = Math.tan(S.fov / 2), mray = mouse ? norm([f[0] + r[0] * mouse[0] * th * w / h + u[0] * mouse[1] * th,
     f[1] + r[1] * mouse[0] * th * w / h + u[1] * mouse[1] * th, f[2] + r[2] * mouse[0] * th * w / h + u[2] * mouse[1] * th]) : null;
-  S.cam = { f, r, u }; S.mray = mray;
+  S.cam = { f, r, u }; S.mray = mray; S.floorY = -1.6; S.hover = mray ? panelHit([0, 0, 0], mray) : null;
   updateGlobe(dt);
-  update(dt, f, keyStick, keyStickY, mray && !hitsGlobe([0, 0, 0], mray) ? [mray] : [], flyKey ? { dir: f, hold: S.time - flyKey } : null);
+  update(dt, f, keyStick, keyStickY, mray && !S.hover && !hitsGlobe([0, 0, 0], mray) ? [mray] : [], flyKey ? { dir: f, hold: S.time - flyKey } : null);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, w, h);
   drawScene(perspective(S.fov, w / h, 0.1, 100), V, h * (70 * D) / S.fov, V, [0, 0, 0]);
   requestAnimationFrame(flatFrame);
@@ -857,7 +979,7 @@ canvas.addEventListener('pointermove', e => { mouse = [e.clientX / canvas.client
   if (dragGlobe && S.cam) { G.q = qmul(qaxis(S.cam.u, (e.clientX - drag[0]) * 0.008), qmul(qaxis(S.cam.r, (e.clientY - drag[1]) * 0.008), G.q)); drag = [e.clientX, e.clientY]; return; }
   const k = S.fov / canvas.clientHeight; S.yaw -= (e.clientX - drag[0]) * k; S.pitch += (e.clientY - drag[1]) * k;
   S.pitch = Math.max(-89 * D, Math.min(89 * D, S.pitch)); drag = [e.clientX, e.clientY]; });
-canvas.addEventListener('pointerup', e => { const ray = eventRay(e); if (drag && moved < 5 && !dragGlobe && ray) { const i = planetAt(ray); if (i >= 0) summonFlat(i); } drag = null; dragGlobe = false; });
+canvas.addEventListener('pointerup', e => { const ray = eventRay(e); if (drag && moved < 5 && !dragGlobe && ray) { const uv = panelHit([0, 0, 0], ray); if (uv) panelPress(uv, [0, 0, 0]); else { const i = planetAt(ray); if (i >= 0) summonFlat(i); } } drag = null; dragGlobe = false; });
 canvas.addEventListener('pointerleave', () => mouse = null);
 canvas.addEventListener('wheel', e => { e.preventDefault(); if (G.i >= 0 && !G.anim) { G.rad = Math.max(0.05, Math.min(0.75, G.rad * (1 - Math.sign(e.deltaY) * 0.08))); return; }
   S.fov = Math.max(20 * D, Math.min(100 * D, S.fov * (1 + Math.sign(e.deltaY) * 0.08))); e.preventDefault(); }, { passive: false });
@@ -874,7 +996,7 @@ document.addEventListener('visibilitychange', () => { if (Snd.ctx && !xrSession)
 // ───────────── VR ─────────────
 const vrBtn = document.getElementById('vr');
 document.getElementById('where').textContent = 'The real sky over ' + PLACE + ' right now, mirrored in a still lake: ' + starCount.toLocaleString('en-GB') +
-  ' catalogued stars, ' + DUST.toLocaleString('en-GB') + ' specks of Milky Way star dust and all 88 constellations. Look at a constellation to light it up; point at a star to see how old its light is; click a planet to bring it to you, then drag to turn it and scroll to resize. Hold W to fly out among the stars and watch the constellations bend; H brings you home.';
+  ' catalogued stars, ' + DUST.toLocaleString('en-GB') + ' specks of Milky Way star dust and all 88 constellations. Look at a constellation to light it up; point at a star to see how old its light is; click a planet to bring it to you, then drag to turn it and scroll to resize. You stand on an observation deck: look down and north for its console. Hold W to fly out among the stars and watch the constellations bend; H brings you home.';
 if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then(ok => {
   if (ok) { vrBtn.disabled = false; vrBtn.textContent = 'Step outside'; } else vrBtn.textContent = 'No headset found';
 }).catch(() => vrBtn.textContent = 'VR unavailable'); else vrBtn.textContent = location.protocol === 'https:' || location.hostname === 'localhost' ? 'No VR in this browser' : 'VR needs https or localhost';
@@ -885,13 +1007,15 @@ vrBtn.addEventListener('click', async () => {
     const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
     await gl.makeXRCompatible();
     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, alpha: false }), depthNear: 0.1, depthFar: 100 });
-    const space = await session.requestReferenceSpace('local');
+    let space, floorY = 0, head0 = null;      // a floor-level space puts the deck under your real feet; without one, assume standing height
+    try { space = await session.requestReferenceSpace('local-floor'); } catch (e) { space = await session.requestReferenceSpace('local'); floorY = -1.6; }
     xrSession = session; restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = 1; soundSpace();
-    let prev = 0, aWas = false, bWas = false, head = [0, 0, 0], headF = [0, 0, -1];
+    let prev = 0, aWas = false, bWas = false, head = [0, 0, 0], headF = [0, 0, -1], anchor = [0, 0, 0];
     const pending = new Map();      // trigger pressed on empty sky: a tap changes the constellation view, holding flies
     session.addEventListener('selectstart', e => { const src = e.inputSource, c = ctl.get(src); if (!c) return cycleMode();
+      const uv = panelHit(c.o, c.d); if (uv && !hitsGlobe(c.o, c.d, c.gp)) return panelPress(uv, head);
       if (hitsGlobe(c.o, c.d, c.gp)) return grabStart(src);
-      const i = planetAt(c.d); if (i < 0) return void pending.set(src, S.time);
+      const i = planetAt(c.d, add3(c.o, anchor, -1)); if (i < 0) return void pending.set(src, S.time);
       if (i === 2) { const fl = norm([headF[0], 0, headF[2]]); summon(2, [head[0] + fl[0] * 0.55, head[1] - 0.28, head[2] + fl[2] * 0.55], [0, -1, 0], 0.15, head); }
       else summon(i, add3(c.o, c.d, 0.5), applySky(S.sky, S.pdirs[i]), 0.15, head); });
     session.addEventListener('selectend', e => { grabEnd(e.inputSource); const t0 = pending.get(e.inputSource); pending.delete(e.inputSource); if (t0 !== undefined && S.time - t0 < 0.35) cycleMode(); });
@@ -907,16 +1031,19 @@ vrBtn.addEventListener('click', async () => {
         const y = gp.axes.length > 3 ? gp.axes[3] : (gp.axes[1] || 0); if (Math.abs(y) > Math.abs(stickY)) stickY = y;
         if (gp.buttons[4] && gp.buttons[4].pressed) a = true; if (gp.buttons[5] && gp.buttons[5].pressed) b = true; }
       if (a && !aWas) { backToNow(); goHome(); } aWas = a; if (b && !bWas) dismiss(); bWas = b;
-      const rays = []; beamCount = 0; ctl.clear();
+      const rays = []; beamCount = 0; ctl.clear(); S.floorY = floorY; S.hover = null;
       for (const src of session.inputSources) { if (src.targetRayMode !== 'tracked-pointer' || beamCount > 1) continue;
         const rp = frame.getPose(src.targetRaySpace, space); if (!rp) continue;
         const t = rp.transform.matrix, dir = norm([-t[8], -t[9], -t[10]]);
         const gr = (src.gripSpace && frame.getPose(src.gripSpace, space)) || rp, gpos = gr.transform.position, gq = gr.transform.orientation, pad = src.gamepad;
         ctl.set(src, { o: [t[12], t[13], t[14]], d: dir, gp: [gpos.x, gpos.y, gpos.z], gq: [gq.x, gq.y, gq.z, gq.w], sy: pad ? (pad.axes.length > 3 ? pad.axes[3] : (pad.axes[1] || 0)) : 0 });
-        if (!hitsGlobe([t[12], t[13], t[14]], dir)) rays.push(dir);
+        const ph = panelHit([t[12], t[13], t[14]], dir); if (ph && !S.hover) S.hover = ph;
+        if (!ph && !hitsGlobe([t[12], t[13], t[14]], dir)) { dir.o = add3([t[12], t[13], t[14]], anchor, -1); rays.push(dir); }
         beamData.set([t[12], t[13], t[14], 0, t[12] + dir[0] * 4, t[13] + dir[1] * 4, t[14] + dir[2] * 4, 1], beamCount++ * 8); }
       if (beamCount) { gl.bindBuffer(gl.ARRAY_BUFFER, beamVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, beamData); }
       const m = pose.transform.matrix; head = [m[12], m[13], m[14]]; headF = [-m[8], -m[9], -m[10]];
+      if (!head0) head0 = head.slice();
+      anchor = head.map((x, i) => head0[i] + (x - head0[i]) * (1 - PARALLAX));    // the star model is centred here: it follows you, but not all the way
       if (G.grabs.length) stick = stickY = 0;      // while you hold a planet the stick resizes it instead
       let fly = null; for (const [src, t0] of pending) { const c = ctl.get(src); if (c && S.time - t0 >= 0.35) { fly = { dir: c.d, hold: S.time - t0 - 0.35 }; break; } }
       updateGlobe(dt);
@@ -927,7 +1054,7 @@ vrBtn.addEventListener('click', async () => {
         const vp = layer.getViewport(view); gl.viewport(vp.x, vp.y, vp.width, vp.height);
         const VF = view.transform.inverse.matrix, V = new Float32Array(VF); V[12] = V[13] = V[14] = 0;   // the stars are infinitely far away
         const ep = view.transform.position;
-        drawScene(view.projectionMatrix, V, vp.height, VF, [ep.x, ep.y, ep.z]);
+        drawScene(view.projectionMatrix, V, vp.height, VF, [ep.x, ep.y, ep.z], [ep.x - anchor[0], ep.y - anchor[1], ep.z - anchor[2]]);
       }
     };
     session.requestAnimationFrame(onFrame);
