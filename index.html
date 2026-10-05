@@ -37,6 +37,7 @@
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
     <button id="ar" style="display:none">Bring the sky into your room</button>
+    <span id="xrerr" style="display:none;font-size:13px;color:#ffb07a;max-width:520px"></span>
     <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>J</kbd> black hole · <kbd>S</kbd> life of a star · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>E</kbd> sky event · <kbd>M</kbd> sound · <kbd>D</kbd> deep-sky list · <kbd>L</kbd> logbook · <kbd>?</kbd> help sheet</span>
   </div>
 </div>
@@ -2745,13 +2746,16 @@ if (navigator.xr) navigator.xr.isSessionSupported('immersive-ar').then(ok => { i
 
 const enter = async (mode, btn) => {
   startAudio(); if (xrSession) return;
-  let session = null;
+  let session = null, step = '';
   try {
-    session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] });
-    await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, alpha: mode === 'immersive-ar' }), depthNear: 0.1, depthFar: 100 });
+    document.getElementById('xrerr').style.display = 'none'; step = 'asking the headset for a session';
+    try { session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] }); }
+    catch (e) { if (mode !== 'immersive-ar') throw e; console.warn(e); session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] }); }      // (some headsets refuse the first way of asking)
+    step = 'preparing the graphics'; await gl.makeXRCompatible(); step = 'creating the picture layer';
+    { let layer; try { layer = new XRWebGLLayer(session, gl, { antialias: true, alpha: mode === 'immersive-ar' }); } catch (e) { console.warn(e); layer = new XRWebGLLayer(session, gl); }
+      session.updateRenderState({ baseLayer: layer, depthNear: 0.1, depthFar: 100 }); } step = 'finding the floor';
     let space, floorY = 0, head0 = null;      // a floor-level space puts the deck under your real feet; without one, assume standing height
-    try { space = await session.requestReferenceSpace('local-floor'); } catch (e) { space = await session.requestReferenceSpace('local'); floorY = -1.6; }
+    try { space = await session.requestReferenceSpace('local-floor'); } catch (e) { space = await session.requestReferenceSpace('local'); floorY = -1.6; } step = 'starting';
     xrSession = session; AR = mode === 'immersive-ar'; ROOM.mode = AR ? String(session.environmentBlendMode || 'unknown') : ''; rideOff(); lifeOff(); clearRoom(); restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = AR ? 0 : 1; ROOM.a = AR ? 1 : 0; if (AR) { WORLD = 0; S.worldNext = 0; S.pos = [0, 0, 0]; S.warp = null; S.at = -1; } soundSpace();      // in your room you start among the stars; the lake is one press away
     let prev = 0, aWas = false, bWas = false, head = [0, 0, 0], headF = [0, 0, -1], anchor = [0, 0, 0], pace = 0, paceAt = 4;
     let tapSun = null, tapPart = null;
@@ -2818,7 +2822,8 @@ const enter = async (mode, btn) => {
       }
     };
     session.requestAnimationFrame(onFrame);
-  } catch (err) { btn.textContent = mode === 'immersive-ar' ? 'Could not show your room' : 'Could not start VR'; console.error(err); if (session) session.end().catch(() => {}); }
+  } catch (err) { btn.textContent = mode === 'immersive-ar' ? 'Could not show your room' : 'Could not start VR'; console.error(err);
+    { const el = document.getElementById('xrerr'); el.textContent = 'While ' + step + ': ' + (err && err.name ? err.name + ' · ' : '') + (err && err.message ? err.message : String(err)) + '   (press the button to try again)'; el.style.display = ''; } if (session) session.end().catch(() => {}); }
 };
 vrBtn.addEventListener('click', () => enter('immersive-vr', vrBtn)); arBtn.addEventListener('click', () => enter('immersive-ar', arBtn));
 </script>
