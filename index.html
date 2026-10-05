@@ -2746,11 +2746,11 @@ if (navigator.xr) navigator.xr.isSessionSupported('immersive-ar').then(ok => { i
 
 const enter = async (mode, btn) => {
   startAudio(); if (xrSession) return;
-  let session = null, step = '';
+  let session = null, step = '', first = null;
   try {
     document.getElementById('xrerr').style.display = 'none'; step = 'asking the headset for a session';
     try { session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] }); }
-    catch (e) { if (mode !== 'immersive-ar') throw e; console.warn(e); session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] }); }      // (some headsets refuse the first way of asking)
+    catch (e) { console.warn(e); first = e; session = await navigator.xr.requestSession(mode); }      // (some headsets refuse the first way of asking)
     step = 'preparing the graphics'; await gl.makeXRCompatible(); step = 'creating the picture layer';
     { let layer; try { layer = new XRWebGLLayer(session, gl, { antialias: true, alpha: mode === 'immersive-ar' }); } catch (e) { console.warn(e); layer = new XRWebGLLayer(session, gl); }
       session.updateRenderState({ baseLayer: layer, depthNear: 0.1, depthFar: 100 }); } step = 'finding the floor';
@@ -2823,7 +2823,7 @@ const enter = async (mode, btn) => {
     };
     session.requestAnimationFrame(onFrame);
   } catch (err) { btn.textContent = mode === 'immersive-ar' ? 'Could not show your room' : 'Could not start VR'; console.error(err);
-    { const el = document.getElementById('xrerr'); el.textContent = 'While ' + step + ': ' + (err && err.name ? err.name + ' · ' : '') + (err && err.message ? err.message : String(err)) + '   (press the button to try again)'; el.style.display = ''; } if (session) session.end().catch(() => {}); }
+    { const el = document.getElementById('xrerr'); el.textContent = 'While ' + step + ': ' + (err && err.name ? err.name + ' · ' : '') + (err && err.message ? err.message : String(err)) + (first && first.message !== (err && err.message) ? '   [first try: ' + first.name + ' · ' + first.message + ']' : '') + (err && err.name === 'NotSupportedError' ? '   The headset or its browser refused. Usual causes: a permission question for this site was answered with no or dismissed (open the site settings next to the address and allow or reset them), or the browser needs a restart.' : '') + '   (press the button to try again)'; el.style.display = ''; } if (session) session.end().catch(() => {}); }
 };
 vrBtn.addEventListener('click', () => enter('immersive-vr', vrBtn)); arBtn.addEventListener('click', () => enter('immersive-ar', arBtn));
 </script>
