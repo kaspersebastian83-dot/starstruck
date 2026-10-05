@@ -930,6 +930,63 @@ const coronaProg = program(`
     vec3 c = uCol*1.1*exp(-x*13.) + mix(uCol, vec3(1., .95, .88), .55)*.3*exp(-x*(4.6-2.6*st));
     o = vec4(c*uAmt*smoothstep(3.4, 2.3, r), 1.); }`);
 const coronaVao = vao(coronaProg, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), [['aQ', 2]]);
+// ───────────── A star's surface, worked out rather than photographed: boiling cells, spots, flares, a darker and redder edge ─────────────
+// Only the Sun and a handful of nearby giants have ever been seen as more than a point, so what is drawn follows from the kind of star it is.
+const starProg = program(`
+  in vec3 aPos; uniform mat4 uPV, uModel; uniform float uGrow; out vec3 vP, vW, vN;
+  void main(){ vec4 w = uModel*vec4(aPos*uGrow, 1.); vW = w.xyz; vN = mat3(uModel)*aPos; vP = aPos; gl_Position = uPV*w; }`, `
+  uniform vec3 uEye, uCol; uniform float uTime, uCell, uCon, uGran, uSpot, uFlare, uLimb, uDim, uShell, uSeed, uChurn; in vec3 vP, vW, vN; out vec4 o;
+  vec3 h3(vec3 p){ p = fract(p*vec3(.1031, .1030, .0973)); p += dot(p, p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }
+  float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
+    return mix(mix(mix(h3(i).x, h3(i+vec3(1., 0., 0.)).x, f.x), mix(h3(i+vec3(0., 1., 0.)).x, h3(i+vec3(1., 1., 0.)).x, f.x), f.y),
+               mix(mix(h3(i+vec3(0., 0., 1.)).x, h3(i+vec3(1., 0., 1.)).x, f.x), mix(h3(i+vec3(0., 1., 1.)).x, h3(i+vec3(1., 1., 1.)).x, f.x), f.y), f.z); }
+  float fbm(vec3 p){ return .58*vn(p) + .29*vn(p*2.1+7.) + .13*vn(p*4.3+13.); }
+  vec2 cells(vec3 p, float t){ vec3 i = floor(p-.5), f = p-i; float d1 = 9., d2 = 9.;                      /* distance to the nearest and second-nearest cell centre; the centres wander, so the cells churn */
+    for (int x = 0; x <= 1; x++) for (int y = 0; y <= 1; y++) for (int z = 0; z <= 1; z++) { vec3 g = vec3(x, y, z), q = g + .5 + .3*sin(t + 6.2831853*h3(i+g)) - f; float d = dot(q, q); if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d; }
+    return sqrt(vec2(d1, d2)); }
+  void main(){ vec3 n = normalize(vN), p = normalize(vP); float mu = abs(dot(n, normalize(uEye-vW)));
+    vec3 base = pow(uCol, vec3(1., 1.4, 2.1));
+    if (uShell > .5) {                                                         /* the thin, lumpy outer air of a giant: it has no sharp edge */
+      float a = sqrt(max(1.-mu*mu, 0.))*uShell, lump = vn(p*2.6 + vec3(0., uTime*.04, uSeed)); lump = .15 + 1.9*lump*lump;
+      o = vec4(base*uDim*.42*lump*smoothstep(.8, 1., a)*pow(max(1.-smoothstep(1., uShell, a), 0.), 1.5), 1.); return; }
+    float t = uTime*uChurn; vec3 q = p*uCell*.5 + uSeed;
+    vec3 w = vec3(vn(q*.7 + vec3(0., t*.5, 0.)), vn(q*.7 + vec3(17., 0., t*.5)), vn(q*.7 + vec3(t*.5, 31., 0.))) - .5;
+    float I = 1. + uCon*(fbm(q + w*1.6 + vec3(0., 0., t*.3)) - .5)*2.4;                                          /* hot gas welling up and cooler gas sinking: brighter and darker patches that slowly turn over */
+    float fine = uGran*smoothstep(.8, .3, length(fwidth(p*uCell)));                                               /* (from far off the grain is too fine to show, and is left out before it can shimmer) */
+    if (fine > .01) { vec2 c = cells(p*uCell + uSeed, t*2.); I += fine*(smoothstep(0., .5, c.y-c.x)*(1.-.5*c.x) - .5); }   /* and the fine grain of small cells on a Sun-like star */
+    if (uSpot > .001) { float fq = mix(9., 4., smoothstep(.5, .9, uSpot)), sn = .65*vn(p*fq + vec3(uSeed*3., 0., uTime*.004)) + .35*vn(p*fq*2.2 + uSeed), th = .80 - .13*uSpot;   /* spots: cooler, darker patches where the magnetic field breaks through */
+      float band = mix(smoothstep(0., .08, abs(p.y))*smoothstep(.65, .5, abs(p.y)), 1., smoothstep(.5, .9, uSpot));
+      float pen = smoothstep(th-.05, th+.02, sn)*band, um = smoothstep(th+.02, th+.07, sn);
+      I *= 1. - pen*(.3 + .4*um); I += (smoothstep(th-.1, th-.02, sn)*band - pen)*.25*(1.-mu); }                 /* with bright patches round them, which show best near the edge */
+    vec3 col = base*I*(1. - uLimb*(1.-mu)); col *= pow(vec3(clamp(I, .25, 1.8)), vec3(0., .5, 1.1));              /* cooler gas is not just dimmer but redder */
+    col *= pow(vec3(mu*.85+.15), vec3(0., .2, .45)*uLimb);                                                       /* towards the edge you look through cooler gas: dimmer and redder */
+    if (uFlare > 0.) for (int k = 0; k < 2; k++) { float ph = uTime/uFlare + float(k)*.5, id = floor(ph), f = fract(ph); vec3 fd = h3(vec3(id, float(k)*7.+1., uSeed+2.))*2.-1.; fd.y *= .6;
+      col += vec3(1., .95, .9)*smoothstep(0., .02, f)*exp(-f*13.)*3.*exp(-(1.-dot(p, normalize(fd)))*260.); }   /* a flare: up in a moment, gone in seconds */
+    o = vec4(col*1.28*uDim, 1.); }`);
+const starBall = (() => { const v = [], ix = [], NA = 72, NB = 36; for (let b = 0; b <= NB; b++) for (let a = 0; a <= NA; a++) { const th = b / NB * Math.PI, ph = a / NA * 2 * Math.PI; v.push(Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)); }
+  for (let b = 0; b < NB; b++) for (let a = 0; a < NA; a++) { const k = b * (NA + 1) + a; ix.push(k, k + NA + 1, k + 1, k + 1, k + NA + 1, k + NA + 2); }
+  const o = vao(starProg, new Float32Array(v), [['aPos', 3]], new Uint32Array(ix)); o.n = ix.length; return o; })();
+function starLook(T, R) {         // what kind of surface a star of this temperature (kelvin) and width (Sun = 1) has
+  const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }, big = Math.log10(Math.max(R, 1));
+  const conv = sm(8500, 6500, T) * sm(0.03, 0.1, R);                           // cool stars boil at the surface; hot ones (and white dwarfs) do not
+  const spot = conv * (1 - sm(2, 6, R)) * (0.35 + 0.55 * sm(4800, 3600, T));   // small cool stars are the most spotted
+  return { conv, spot, cell: Math.min(44, Math.max(3.5, 44 / Math.pow(Math.max(R, 0.05), 0.5))),      // the bigger and puffier the star, the fewer and larger its cells: a red supergiant has only a handful
+    con: 0.05 + conv * (0.16 + 0.5 * Math.min(1, big / 2.3)), gran: conv * 0.26 * sm(8, 20, 44 / Math.pow(Math.max(R, 0.05), 0.5)), flare: spot > 0.6 ? 5 : spot > 0.1 ? 28 : 0, fuzz: 0.16 * sm(15, 150, R), limb: 0.45 + 0.2 * conv, churn: 0.5 / (1 + big * 1.6) }; }
+function drawStar(PVF, eye, pos, q, r, col, look, dim, seed) {      // the ball itself; leaves the depth test on, depth writing off and additive blending, ready for its glow
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND); gl.useProgram(starProg.p); gl.uniformMatrix4fv(starProg.u.uPV, false, PVF); gl.uniformMatrix4fv(starProg.u.uModel, false, modelMatrix(q, pos, r));
+  gl.uniform3fv(starProg.u.uEye, eye); gl.uniform3fv(starProg.u.uCol, col); gl.uniform1f(starProg.u.uTime, S.time); gl.uniform1f(starProg.u.uCell, look.cell); gl.uniform1f(starProg.u.uCon, look.con); gl.uniform1f(starProg.u.uGran, look.gran); gl.uniform1f(starProg.u.uSpot, look.spot);
+  gl.uniform1f(starProg.u.uFlare, look.flare); gl.uniform1f(starProg.u.uLimb, look.limb); gl.uniform1f(starProg.u.uDim, dim); gl.uniform1f(starProg.u.uSeed, seed || 0); gl.uniform1f(starProg.u.uChurn, look.churn);
+  gl.uniform1f(starProg.u.uShell, 0); gl.uniform1f(starProg.u.uGrow, 1); gl.bindVertexArray(starBall.v); gl.drawElements(gl.TRIANGLES, starBall.n, gl.UNSIGNED_INT, 0);
+  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  if (look.fuzz > 0.01) { gl.uniform1f(starProg.u.uShell, 1 + look.fuzz); gl.uniform1f(starProg.u.uGrow, 1 + look.fuzz); gl.drawElements(gl.TRIANGLES, starBall.n, gl.UNSIGNED_INT, 0); }
+}
+const STAR_LIGHT = { p: [0, 0, 0], c: [0, 0, 0] };          // the star you are with lights the deck
+function starLight() { const L = STAR_LIGHT; L.c = [0, 0, 0];
+  if (LIFE.on && LIFE.v) { const v = LIFE.v, k = v.r > 0.002 ? v.dim * Math.min(1.3, 0.3 + v.r * 0.45) : 0, g = v.glow ? Math.min(2.5, v.glow[1]) * Math.min(1, v.glow[0]) * 0.45 : 0;
+    L.p = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]]; L.c = [0, 1, 2].map(j => v.col[j] * k + (v.glow ? v.glow[2][j] * g : 0) + 2 * LIFE.flash); }
+  else if (S.at >= 0 && S.at < DSO0 && !inside()) { const c = starColour(PICK[S.at][5]); L.p = add3(S.head, applySky(S.sky, norm(add3(pickPos[S.at], S.pos, -1))), 3.5); L.c = c.map(x => x * 0.85); }
+  else if (G.i === SUN && G.tex && !inside()) { L.p = G.pos; L.c = [1, .8, .55].map(x => x * 0.55 * Math.min(1.5, G.rad / 0.26)); }
+  return L; }
 function drawSunFx(PVF, eye, pos, q, rad, col, amt) {    // called with the depth buffer on and additive blending: what is behind the globe stays hidden
   const n = norm(add3(eye, pos, -1)), r = norm(cross(Math.abs(n[1]) < 0.98 ? [0, 1, 0] : [1, 0, 0], n)), u = cross(n, r);
   gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PVF); gl.uniform3fv(coronaProg.u.uC, pos); gl.uniform3fv(coronaProg.u.uR, r); gl.uniform3fv(coronaProg.u.uU, u);
@@ -1168,9 +1225,9 @@ function updateVisitors(dt) {
 
 // ───────────── The observation deck: a glass platform, a railing and a control console ─────────────
 const deck = program(`
-  in vec3 aPos; in vec3 aUVK; uniform mat4 uPV; uniform float uFloor, uInside; out vec2 vUV; out float vK;
-  void main(){ vUV = aUVK.xy; vK = aUVK.z; gl_Position = uInside > .5 && (aUVK.z < 1.5 || aUVK.z > 2.5 || length(aPos.xz) > 1.6) ? vec4(2., 2., 2., 1.) : uPV*vec4(aPos.x, aPos.y+uFloor, aPos.z, 1.); }`, `
-  uniform float uTime, uFade; in vec2 vUV; in float vK; out vec4 o;
+  in vec3 aPos; in vec3 aUVK; uniform mat4 uPV; uniform float uFloor, uInside; out vec2 vUV; out float vK; out vec3 vW;
+  void main(){ vUV = aUVK.xy; vK = aUVK.z; vW = vec3(aPos.x, aPos.y+uFloor, aPos.z); gl_Position = uInside > .5 && (aUVK.z < 1.5 || aUVK.z > 2.5 || length(aPos.xz) > 1.6) ? vec4(2., 2., 2., 1.) : uPV*vec4(aPos.x, aPos.y+uFloor, aPos.z, 1.); }`, `
+  uniform float uTime, uFade; uniform vec3 uStarP, uStarC; in vec2 vUV; in float vK; in vec3 vW; out vec4 o;
   float line(float d, float w){ return 1.-smoothstep(w, w+fwidth(d)*1.5, abs(d)); }
   void main(){
     vec3 teal = vec3(.22,.80,.86), amber = vec3(1.,.60,.24); vec4 c;
@@ -1187,6 +1244,9 @@ const deck = program(`
     else if (vK < 2.5) c = vec4(vec3(.020,.027,.036) + vec3(.035,.045,.055)*vUV.y, 1.); // posts, pedestal, panel frame
     else if (vK < 3.5) c = vec4(vec3(.012,.017,.024) + amber*.45*line(vUV.y-.8, .06), 1.);   // the edge of the platform
     else c = vec4(mix(teal*.10, amber, pow(.5+.5*sin(vUV.x*6.2831853-uTime*1.4), 10.)), 1.);    // running lights
+    if (dot(uStarC, uStarC) > 1e-5) { vec3 L = normalize(uStarP - vW);                  // a star close by lights the deck in its own colour
+      float lit = vK < .5 ? .15 + .85*max(L.y, 0.) : .3 + .7*abs(dot(normalize(cross(dFdx(vW), dFdy(vW))), L));
+      c.rgb += uStarC*lit*(vK < .5 ? .05 : vK < 1.5 ? .26 : vK < 3.5 ? .15 : 0.); }
     o = c*uFade;
   }`);
 const panelProg = program(`
@@ -1431,7 +1491,7 @@ function starFacts(i) { if (i === BHI) return ['CYGNUS X-1', 'The first black ho
   const cls = T > 30000 ? ['O', 'blue'] : T > 10000 ? ['B', 'blue-white'] : T > 7500 ? ['A', 'white'] : T > 6000 ? ['F', 'yellow-white'] : T > 5200 ? ['G', 'yellow'] : T > 3700 ? ['K', 'orange'] : ['M', 'red'];
   const L = Math.pow(10, 0.4 * (4.83 - pickAbs[i])), n = v => v >= 100 ? (Math.round(v / (v >= 1000 ? 100 : 10)) * (v >= 1000 ? 100 : 10)).toLocaleString('en-GB') : v >= 10 ? Math.round(v) : v.toFixed(1);
   return [p[3].toUpperCase(), (dbl ? 'A double star: the main one is ' : 'A ') + cls[1] + (dbl ? ', class ' : ' star, class ') + cls[0], [['From home', (p[4] < 100 ? '' : 'about ') + n(p[4]) + ' light-years'], ['Brightness', 'about ' + n(L) + ' × the Sun, in visible light'],
-    ['Surface', 'about ' + (Math.round(T / 100) * 100).toLocaleString('en-GB') + ' K'], ['Seen from Earth', 'magnitude ' + p[2].toFixed(1)]], dbl ? dbl[2] : 'Worked out from its colour and brightness, so treat these as estimates.'];
+    ['Surface', 'about ' + (Math.round(T / 100) * 100).toLocaleString('en-GB') + ' K'], ['Seen from Earth', 'magnitude ' + p[2].toFixed(1)]], dbl ? dbl[2] : 'Worked out from its colour and brightness: estimates. Its surface is drawn to suit its kind, not copied from a picture.'];
 }
 const infoCv = document.createElement('canvas'); infoCv.width = 896; infoCv.height = 560;
 const infoCx = infoCv.getContext('2d'), infoTex = textTexture(infoCv), infoVao = board([1.25, 1.5, -1.5], 1.0, 0.625), infoVaoIn = board([0.68, 1.42, -1.2], 0.64, 0.4);
@@ -2076,12 +2136,13 @@ function lifeColour(T) {          // the colour of something glowing at that tem
   const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592), g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
   const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307, c = [r, g, b].map(v => Math.max(0, Math.min(255, v)) / 255), m = Math.max(...c);
   return c.map(v => Math.pow(v / m, 1.5 + 1.1 * Math.min(1, Math.max(0, (6500 - T) / 1500)))); }      // (cool stars most of all: a red giant should look red)
+const SUN_COL = lifeColour(5772);
 const lifeR = R => 0.34 * Math.pow(R, 0.33);          // how big the model is drawn: squeezed, or a red giant would not fit in the sky
 const LIFE_TILT = 35 * D, LIFE_ROT = new Float32Array([1, 0, 0, 0, Math.cos(LIFE_TILT), Math.sin(LIFE_TILT), 0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)]), LIFE_B = [0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)];   // the disc, and the plane of the orbits, lean towards you
 const LIFE_ORBITS = [['ORBIT OF MERCURY', 83.2], ['ORBIT OF VENUS', 155.5], ['ORBIT OF THE EARTH', 215], ['ORBIT OF MARS', 327.6], ['ORBIT OF JUPITER', 1118.6]];      // in widths of the Sun's radius
 function startLife() { if (LIFE.on) return; rideOff(); WORLD = 0; S.worldNext = 0; S.groundT = 0; S.ground = 0; S.warp = null; S.at = -1; S.fspeed = 0; S.pos = [0, 0, 0]; S.deep = S.deepT = 0; S.wf = 1; S.wfT = 0; G.grabs = [];
   Object.assign(LIFE, { on: true, s: 0, sT: 0, play: true, flash: 0, v: null }); soundSpace(); whoosh(2);
-  if (!starTex && !starTexAsked) { starTexAsked = true; loadTex('data:image/webp;base64,' + STEX, t => starTex = t); } }
+}
 function lifeOff() { if (!LIFE.on) return; LIFE.on = false; LIFE.play = false; LIFE.flash = 0; LIFE.v = null; if (S.sheet === 'life') S.sheet = ''; }
 function lifePress(row) { const star = LIFE_STARS[LIFE.star];
   if (row < 603) { if (row - 600 !== LIFE.star) { LIFE.star = row - 600; LIFE.s = LIFE.sT = 0; LIFE.flash = 0; } LIFE.play = true; if (LIFE.s >= LIFE_STARS[LIFE.star].len - 0.01) LIFE.s = LIFE.sT = 0; }
@@ -2101,8 +2162,8 @@ function updateLife(dt, stickY) {
 }
 function lifeView() {             // what to draw for this moment: the ball, its glow, the gas round it, and what it is measured against
   const n = lifeNow(), { star, st, p, R, T } = n, vis = st.vis, sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-  const v = { r: R ? lifeR(R) : 0, col: lifeColour(T), dim: sm(500, 2200, T), fx: 0, glow: null, dust: [], rings: [], n };
-  if (vis === 'cloud') { const nx = star.stages[n.i + 1].k[0]; v.r = lifeR(nx[2]) * sm(0.6, 1, p); v.col = lifeColour(nx[3]); v.dim = 1; v.dust.push([0, p, 1]); v.glow = [0.25 + 0.5 * p, 1.1 * p * p, [1, .5, .3]]; }
+  const nx = R ? null : star.stages[n.i + 1].k[0], v = { r: R ? lifeR(R) : 0, col: lifeColour(T), dim: sm(500, 2200, T), fx: 0, glow: null, dust: [], rings: [], n, look: starLook(R ? T : nx[3], R ? R : nx[2]) };
+  if (vis === 'cloud') { v.r = lifeR(nx[2]) * sm(0.6, 1, p); v.col = lifeColour(nx[3]); v.dim = 1; v.dust.push([0, p, 1]); v.glow = [0.25 + 0.5 * p, 1.1 * p * p, [1, .5, .3]]; }
   else if (vis === 'proto') { v.fx = 0.6 * p; v.dust.push([0, 1, 1 - sm(0.45, 0.85, p)], [1, 0, 1 - sm(0.1, 0.5, p)]); v.glow = [Math.max(0.25, v.r * 0.8), 0.9 * (1 - 0.5 * p), v.col]; }
   else if (vis === 'star') { v.fx = 0.9; if (st.pulse) v.r *= 1 + 0.025 * Math.sin(S.time * 1.1) * (st.k[0][2] === st.k[st.k.length - 1][2] ? 1 : sm(0.3, 0.9, p)); }
   else if (vis === 'pn') { const r0 = lifeR(st.k[0][2]) * 0.9; v.fx = 0.9 * (1 - sm(0, 0.08, p)); v.dust.push([2, r0 + (4.6 - r0) * Math.pow(p, 0.7), sm(0, 0.06, p) * (1 - 0.75 * sm(0.7, 1, p))]); v.glow = [Math.max(0.16, v.r * 3), 1.3 * sm(0.06, 0.2, p), v.col]; }
@@ -2148,17 +2209,14 @@ const LIFEN = 14000, lifeVao = (() => { let seed = 1983; const rnd = () => { see
   const v = new Float32Array(LIFEN * 4); for (let i = 0; i < v.length; i++) v[i] = rnd(); return vao(lifeDust, v, [['aS', 4]]); })();
 function drawLife(PVF, eye) {     // called with the deck already drawn, so the rail hides what is behind it; leaves the depth test on, depth writing off and additive blending
   const v = LIFE.v; if (!v) return; const C = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]], q = qaxis([0, 1, 0], S.time * 0.05), nn = norm(add3(S.head, C, -1)), rt = norm(cross([0, 1, 0], nn)), up = cross(nn, rt);
-  if (v.r > 0.002 && starTex) { gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
-    gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PVF); gl.uniform3fv(globe.u.uEye, eye); gl.uniform1i(globe.u.uTex, 0); gl.uniform3f(globe.u.uLight, 0, 1, 0); gl.uniform1f(globe.u.uEm, 1); gl.uniform1f(globe.u.uDim, v.dim); gl.uniform4f(globe.u.uRing, 0, 0, 0, 0);
-    gl.bindTexture(gl.TEXTURE_2D, starTex); gl.bindVertexArray(sphereVao.v); gl.uniformMatrix4fv(globe.u.uModel, false, modelMatrix(q, C, v.r));
-    gl.uniform3fv(globe.u.uAtm, v.col.map(x => x * 0.9)); gl.uniform4f(globe.u.uTint, v.col[0], v.col[1], v.col[2], 0.85); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); gl.uniform1f(globe.u.uDim, 1); }
+  if (v.r > 0.002) drawStar(PVF, eye, C, q, v.r, v.col, v.look, v.dim, LIFE.star * 3.1);
   gl.enable(gl.DEPTH_TEST); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
   if (v.rings.length) { gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PVF); gl.bindVertexArray(circleVao.v);
     for (const g of v.rings) { const a = g.flat ? [1, 0, 0] : rt, b = g.flat ? LIFE_B : up; if (g.flat || g.rad > v.r) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);          // (a comparison circle smaller than the star is drawn across its face)
       gl.uniformMatrix4fv(orb.u.uModel, false, new Float32Array([a[0] * g.rad, a[1] * g.rad, a[2] * g.rad, 0, b[0] * g.rad, b[1] * g.rad, b[2] * g.rad, 0, 0, 0, 1, 0, C[0], C[1], C[2], 1]));
       gl.uniform3fv(orb.u.uCol, g.col.map(x => x * g.a)); gl.drawArrays(gl.LINE_STRIP, 0, 129); }
     gl.enable(gl.DEPTH_TEST); }
-  if (v.fx > 0.01 && v.r > 0.002 && starTex) drawSunFx(PVF, eye, C, q, v.r, v.col, v.fx * v.dim);
+  if (v.fx > 0.01 && v.r > 0.002) drawSunFx(PVF, eye, C, q, v.r, v.col, v.fx * v.dim * (0.25 + 0.75 * v.look.conv));
   if (v.dust.length) { gl.useProgram(lifeDust.p); gl.uniformMatrix4fv(lifeDust.u.uPV, false, PVF); gl.uniformMatrix3fv(lifeDust.u.uRot, false, LIFE_ROT); gl.uniform3fv(lifeDust.u.uC, C);
     gl.uniform1f(lifeDust.u.uTime, S.time); gl.uniform1f(lifeDust.u.uPx, S.px || 1); gl.uniform1f(lifeDust.u.uR, v.r); gl.bindVertexArray(lifeVao.v);
     for (const [mode, A, amt] of v.dust) if (amt > 0.01) { gl.uniform1f(lifeDust.u.uMode, mode); gl.uniform1f(lifeDust.u.uA, A); gl.uniform1f(lifeDust.u.uAmt, amt); gl.drawArrays(gl.POINTS, 0, mode === 1 || mode === 4 ? 1800 : LIFEN); } }
@@ -2450,10 +2508,10 @@ function update(dt, forward, stick, stickY, rays, fly) {
 }
 
 const IDENT3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
-let starTex = null, starTexAsked = false;
 function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
   if (G.i === SYS && G.tex) drawSystem(PVF, eye || [0, 0, 0]);
   else if (G.i >= COMET && G.tex) drawVisitor(PVF, eye || [0, 0, 0]);
+  else if (G.i === SUN && G.tex) { drawStar(PVF, eye || [0, 0, 0], G.pos, G.q, G.rad, SUN_COL, starLook(5772, 1), 1, 0); drawSunFx(PVF, eye || [0, 0, 0], G.pos, G.q, G.rad, [1, .62, .25], 1); }   // the Sun is a star: its surface is alive
   else if (G.i >= 0 && G.tex) {                       // the planet in the room is a real object: it has depth and a lit side
     const M = modelMatrix(G.q, G.pos, G.rad), P = BODY(G.i);
     gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
@@ -2469,7 +2527,6 @@ function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
       gl.uniform3fv(ringProg.u.uLight, G.light); gl.uniform3fv(ringProg.u.uCentre, G.pos); gl.uniform1f(ringProg.u.uRad, G.rad); gl.uniform1i(ringProg.u.uTex, 0);
       gl.bindTexture(gl.TEXTURE_2D, ringTex); gl.bindVertexArray(ringVao.v); gl.drawElements(gl.TRIANGLES, ringCount, gl.UNSIGNED_INT, 0); }
     gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
-    if (G.i === SUN) drawSunFx(PVF, eye || [0, 0, 0], G.pos, G.q, G.rad, [1, .62, .25], 1);
   }
 }
 function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
@@ -2580,7 +2637,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   drawPanel();
   if (inside()) drawInside(PVF, eye || [0, 0, 0]);
   gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  gl.useProgram(deck.p); gl.uniformMatrix4fv(deck.u.uPV, false, PVF); gl.uniform1f(deck.u.uFloor, S.floorY); gl.uniform1f(deck.u.uInside, inside() ? 1 : 0);
+  gl.useProgram(deck.p); gl.uniformMatrix4fv(deck.u.uPV, false, PVF); gl.uniform1f(deck.u.uFloor, S.floorY); gl.uniform1f(deck.u.uInside, inside() ? 1 : 0); { const L = starLight(); gl.uniform3fv(deck.u.uStarP, L.p); gl.uniform3fv(deck.u.uStarC, L.c); }
   gl.uniform1f(deck.u.uTime, S.time); gl.bindVertexArray(deckVao.v);
   if (S.ground < 0.99) { gl.uniform1f(deck.u.uFade, 1 - S.ground); gl.drawElements(gl.TRIANGLES, stationCount, gl.UNSIGNED_INT, 0); }      // the station appears as the lake falls away
   gl.uniform1f(deck.u.uFade, 1); gl.drawElements(gl.TRIANGLES, deckCount - stationCount, gl.UNSIGNED_INT, stationCount * 4);
@@ -2594,19 +2651,15 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
   if (!inside()) { gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 72, gl.UNSIGNED_INT, 0); }
   if (S.at >= 0 && S.at < DSO0) {                    // you have stopped at a star: here it is as a sun
-    if (!starTex && !starTexAsked) { starTexAsked = true; loadTex('data:image/webp;base64,' + STEX, t => starTex = t); }
-    if (starTex) { const i = S.at, dir = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), dbl = DOUBLES[PICK[i][3]], mid = add3(S.head, dir, dbl ? 4.2 : 3.5);
-      gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
-      gl.useProgram(globe.p); gl.uniformMatrix4fv(globe.u.uPV, false, PVF); gl.uniform3fv(globe.u.uEye, eye || [0, 0, 0]); gl.uniform1i(globe.u.uTex, 0);
-      gl.uniform3f(globe.u.uLight, 0, 1, 0); gl.uniform1f(globe.u.uEm, 1); gl.bindTexture(gl.TEXTURE_2D, starTex); gl.bindVertexArray(sphereVao.v);
-      const fx = [], sun = (pos, r, bv, spin) => { const c = starColour(bv), q = qaxis([0, 1, 0], S.time * spin); fx.push([pos, q, r, c]); gl.uniformMatrix4fv(globe.u.uModel, false, modelMatrix(q, pos, r));
-        gl.uniform3fv(globe.u.uAtm, c.map(x => x * 0.9)); gl.uniform4f(globe.u.uTint, c[0], c[1], c[2], 0.85); gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); };
-      if (!dbl) sun(mid, starSize(i), PICK[i][5], 0.05);
+    { const i = S.at, dir = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), dbl = DOUBLES[PICK[i][3]], mid = add3(S.head, dir, dbl ? 4.2 : 3.5);
+      const fx = [], sun = (pos, r, bv, spin, M) => { const c = starColour(bv), q = qaxis([0, 1, 0], S.time * spin), T = 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62)), look = starLook(T, M === null ? 1 : Math.sqrt(Math.pow(10, 0.4 * (4.83 - M))) / Math.pow(T / 5772, 2));   // its width, roughly, from how bright and how hot it is
+        drawStar(PVF, eye || [0, 0, 0], pos, q, r, c, look, 1, (i % 97) * 0.37 + (M === null ? 5 : 0)); fx.push([pos, q, r, c, 0.25 + 0.65 * look.conv]); };
+      if (!dbl) sun(mid, starSize(i), PICK[i][5], 0.05, pickAbs[i]);
       else { const r1 = Math.min(0.7, starSize(i) * 0.8), r2 = r1 * dbl[1], sep = (r1 + r2) * 1.3, a = S.time * 0.16, rt = norm(cross(dir, [0, 1, 0])), dp = norm(add3(dir.map(x => x * 0.4), [0, 0.3, 0]));
         const o = add3(rt.map(x => x * Math.cos(a)), dp, Math.sin(a));                    // the two circle their common centre (not to scale)
-        sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08); }
+        sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05, pickAbs[i]); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08, null); }
       gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
-      for (const [pos, q, r, c] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, 0.9); } }
+      for (const [pos, q, r, c, amt] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, amt); } }
   if (LIFE.on) drawLife(PVF, eye || [0, 0, 0]);
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
   drawRoom(PVF, eye);
