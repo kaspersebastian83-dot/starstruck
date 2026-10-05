@@ -36,6 +36,7 @@
   <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0).</p>
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
+    <button id="ar" style="display:none">Bring the sky into your room</button>
     <span id="keys">Drag to look around · <kbd>C</kbd> figures / names / lines · <kbd>G</kbd> lake / float in space · <kbd>←</kbd> <kbd>→</kbd> time travel · <kbd>↑</kbd> <kbd>↓</kbd> drift speed · <kbd>W</kbd> fly · <kbd>H</kbd> home · <kbd>J</kbd> black hole · <kbd>S</kbd> life of a star · <kbd>N</kbd> back to now · <kbd>1</kbd>–<kbd>8</kbd> planets · <kbd>9</kbd> solar system · <kbd>0</kbd> Sun · <kbd>B</kbd> send planet home · <kbd>E</kbd> sky event · <kbd>M</kbd> sound · <kbd>D</kbd> deep-sky list · <kbd>L</kbd> logbook · <kbd>?</kbd> help sheet</span>
   </div>
 </div>
@@ -107,6 +108,8 @@ function perspective(fovy, aspect, n, f) { const t = 1 / Math.tan(fovy / 2), o =
 // Equatorial → local sky (x east, y up, -z north) for a given moment.
 let RIDE_SKY = null;             // set while the scale ride is running: how the sky is turned then
 let WORLD = 0;                   // which world you stand on: an index into WORLDS
+let AR = false;                  // the headset is showing your real room, with the sky in it
+const ROOM = { a: 0, dim: 0.55 };   // a: how much of the room shows (0 at the lake, by the black hole or inside the station); dim: how far its light is turned down so that the stars can be seen
 const WORLDS = [                  // home: which planet's place in the Solar System you see from; pole and W: how the body is turned (IAU values: pole RA and Dec, prime meridian at J2000 and degrees per day)
   { id: 'earth', name: 'EARTH', place: PLACE, line: 'A still lake at night, under the sky of home.', home: 2, air: 1 },
   { id: 'moon', name: 'THE MOON', place: 'the Moon, near Clavius', line: 'Earth hangs in the sky, four times the size of our Moon, and never sets.', home: 2, air: 0, pole: [269.9949, 66.5392], W: [38.3213, 13.17635815], lat: -58.4, lon: -14.4,
@@ -141,6 +144,10 @@ const unSky = (S, w) => [S[0] * w[0] + S[1] * w[1] + S[2] * w[2], S[3] * w[0] + 
 // ───────────── GL setup ─────────────
 const canvas = document.getElementById('c');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, xrCompatible: true });
+{ const bf = gl.blendFunc.bind(gl), en = gl.enable.bind(gl), di = gl.disable.bind(gl); let add = false, on = false;        // in your room, glowing things (stars, haze, names) are added to the camera picture; solid things (globes, the console) cover it
+  const fix = () => { if (AR) gl.colorMask(true, true, true, !(on && add)); };
+  gl.blendFunc = (a, b) => { bf(a, b); add = a === gl.ONE && b === gl.ONE; fix(); };
+  gl.enable = c => { en(c); if (c === gl.BLEND) { on = true; fix(); } }; gl.disable = c => { di(c); if (c === gl.BLEND) { on = false; fix(); } }; }
 if (!gl) { document.getElementById('where').textContent = 'This browser has no WebGL2, so the sky cannot be drawn.'; throw new Error('no webgl2'); }
 
 function program(vs, fs) {
@@ -1299,13 +1306,13 @@ let deckVao, deckCount, stationCount = 0, panelVao;
 const panelCv = document.createElement('canvas'); panelCv.width = 1024; panelCv.height = 512;
 const panelCx = panelCv.getContext('2d'), panelTex = textTexture(panelCv);
 const PILLS = [['smaller', 'SMALLER'], ['larger', 'LARGER'], ['back', 'BACK'], ['view', 'FIGURES'], ['ground', ''], ['sound', ''], ['log', 'LOGBOOK'], ['help', 'HELP'],          // top row: what you hold and how things look
-  ['worlds', 'WORLDS'], ['time', 'DEEP TIME'], ['ride', 'SCALE'], ['life', 'STAR LIFE'], ['hole', 'BLACK HOLE'], ['deep', 'DEEP SKY'], ['home', 'HOME']];                                          // bottom row: places to go
+  ['worlds', 'WORLDS'], ['time', 'DEEP TIME'], ['ride', 'SCALE'], ['life', 'STAR LIFE'], ['hole', 'BLACK HOLE'], ['deep', 'DEEP SKY'], ['home', 'HOME'], ['room', 'ROOM LIGHT']];                                          // bottom row: places to go
 const pillRect = i => [40 + (i % 8) * 118.5, i < 8 ? 312 : 374, 111.5, 54], pillPt = i => { const r = pillRect(i); return [r[0] + r[2] / 2, r[1] + r[3] / 2]; };
 const SHEETS = ['help', 'log', 'deep', 'worlds', 'time'];
 const DISC = [['#8f8a86', '#3e3b39'], ['#f2deb0', '#8a6f3c'], ['#4f8fe0', '#12305e'], ['#e0683c', '#5e2414'], ['#e2c39a', '#7a5a3a'], ['#ecd9a4', '#7d6a3e'], ['#a9e6ea', '#3f7f88'], ['#4a6cf0', '#16246e']];
 let panelState = '';
 function drawPanel() {
-  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD + RIDE.on + LIFE.on + (S.at === BHI || (S.warp && S.warp.star === BHI)); if (state === panelState) return; panelState = state;
+  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD + RIDE.on + LIFE.on + AR + ROOM.dim + (S.at === BHI || (S.warp && S.warp.star === BHI)); if (state === panelState) return; panelState = state;
   const x = panelCx, T = 'rgba(70,215,230,', A = '#ffa64a';
   x.fillStyle = '#040910'; x.fillRect(0, 0, 1024, 512); x.textBaseline = 'middle'; x.lineWidth = 2;
   x.strokeStyle = T + '.55)'; x.strokeRect(14, 14, 996, 484);
@@ -1356,10 +1363,11 @@ function drawPanel() {
     x.fillStyle = on ? A : T + '.9)'; for (const [dx, dy] of [[18, -6], [-31, 8], [41, 12]]) { x.beginPath(); x.arc(cx + dx, cy + dy, 3.5, 0, Math.PI * 2); x.fill(); }
     x.textAlign = 'center'; x.font = '500 12px ' + FONT; sp('0.05em'); x.fillText('SOL SYSTEM', cx, 274); }
   PILLS.forEach(([id, label], i) => { const [px, py, pw, ph] = pillRect(i), on = S.sheet === id || (id === 'back' && G.i >= 0) || (id === 'sound' && Snd.muted) || (id === 'hole' && (S.at === BHI || (S.warp && S.warp.star === BHI)));
-    if (id === 'ground') label = S.groundT ? 'TO SPACE' : WORLD ? 'LAND' : 'TO LAKE'; if (id === 'sound') label = Snd.muted ? 'MUTED' : 'SOUND';
+    if (id === 'ground') label = S.groundT ? (AR ? 'TO ROOM' : 'TO SPACE') : WORLD ? 'LAND' : 'TO LAKE'; if (id === 'room' && !AR) return; if (id === 'sound') label = Snd.muted ? 'MUTED' : 'SOUND';
     x.lineWidth = 2; x.strokeStyle = on ? A : T + '.6)'; x.fillStyle = on ? 'rgba(255,166,74,.12)' : T + '.06)';
     x.beginPath(); x.roundRect(px, py, pw, ph, 13); x.fill(); x.stroke();
-    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 13px ' + FONT; sp('0.05em'); x.fillText(label, px + pw / 2, py + ph / 2 + 1); });
+    x.textAlign = 'center'; x.fillStyle = on ? A : T + '.95)'; x.font = '500 13px ' + FONT; sp('0.05em'); x.fillText(label, px + pw / 2, py + ph / 2 + (id === 'room' ? -7 : 1));
+    if (id === 'room') { x.fillStyle = T + '.6)'; x.font = '400 11px ' + FONT; x.fillText(ROOM.dim > 0.7 ? 'nearly dark' : ROOM.dim > 0.4 ? 'dimmed' : ROOM.dim > 0.1 ? 'a little dimmed' : 'as it is', px + pw / 2, py + ph / 2 + 11); } });
   { const m = MISSIONS.findIndex((_, i) => !LOG.done.includes(i)); x.textAlign = 'left'; x.font = '500 15px ' + FONT; sp('0.08em');              // what to try next
     x.fillStyle = A; x.fillText(m < 0 ? 'ALL MISSIONS COMPLETE' : 'MISSION ' + (LOG.done.length + 1) + ' OF ' + MISSIONS.length, 40, 470);
     if (m >= 0) { x.fillStyle = '#e6f2ff'; x.font = '400 16px ' + FONT; sp('0.03em'); x.fillText(MISSIONS[m].t, 230, 470); } }
@@ -1383,7 +1391,7 @@ function panelPress(uv, eye) { const b = panelButton(uv); if (b === null) return
   else if (typeof b === 'number') { if (b !== G.i) summon(b, [HOLO[0], HOLO[1] + S.floorY, HOLO[2]], skyDirOf(b), b === SUN ? 0.26 : b === ISS ? 0.3 : b === COMET ? 0.13 : 0.2, eye); }
   else if (b === 'smaller' || b === 'larger') { if (G.i >= 0 && !G.anim) G.radT = Math.max(0.04, Math.min(2.5, (G.radT || G.rad) * (b === 'larger' ? 1.45 : 1 / 1.45))); }
   else if (b === 'back') dismiss(); else if (b === 'view') cycleMode(); else if (b === 'ground') toggleGround();
-  else if (b === 'sound') toggleMute(); else if (b === 'hole') goHole(); else if (b === 'life') { if (!LIFE.on) startLife(); S.sheet = 'life'; } else if (b === 'ride') { if (!RIDE.on) startRide(); S.sheet = 'ride'; } else if (SHEETS.includes(b)) S.sheet = S.sheet === b ? '' : b; else { backToNow(); goHome(); } }
+  else if (b === 'sound') toggleMute(); else if (b === 'room') { if (AR) ROOM.dim = ROOM.dim > 0.7 ? 0.25 : ROOM.dim > 0.4 ? 0.8 : ROOM.dim > 0.1 ? 0 : 0.55; } else if (b === 'hole') goHole(); else if (b === 'life') { if (!LIFE.on) startLife(); S.sheet = 'life'; } else if (b === 'ride') { if (!RIDE.on) startRide(); S.sheet = 'ride'; } else if (SHEETS.includes(b)) S.sheet = S.sheet === b ? '' : b; else { backToNow(); goHome(); } }
 
 // ───────────── Help sheet, fact sheet and small floating tags ─────────────
 function board(c, w, h) {         // an upright sheet at c (height above the floor), turned to face the middle of the deck
@@ -1554,7 +1562,7 @@ function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text h
       list.push({ p: add3(t, to, Math.min(0.45 * G.rad, dl * 0.4) / dl), k: TAGS.indexOf(P.tag), h }); }); }          // (brought a little towards you, so the part in front does not hide its neighbour's name)
   if (inside()) for (const r of inNext()) { const m = inMark(r), h = Math.max(0.06, dist3(m, S.head) * 0.03); list.push({ p: [m[0], m[1] + h, m[2]], k: TAGS.indexOf(ISS_INFO[ROOMS[r].id][0]), h }, { p: [m[0], m[1] - h * 0.3, m[2]], k: H_TRAVEL, h: h * 0.5 }); }   // the rooms next door are named in their hatches
   if (RIDE.on) for (const [t, where, a, b] of RIDE_TAGS) if (RIDE.s > a && RIDE.s < b) { const d = norm(applySky(S.sky, where())); list.push({ p: add3(add3(S.head, d, 30), [0, -0.75, 0]), k: TAGS.indexOf(t), h: 0.5 }); }   // names along the ride
-  if (LIFE.on && LIFE.v) for (const g of LIFE.v.rings) if (g.tag) list.push({ p: g.tp, k: TAGS.indexOf(g.tag), h: 0.2 });      // what the model star is measured against
+  if (LIFE.on && LIFE.v) for (const g of LIFE.v.rings) if (g.tag) list.push({ p: g.tp, k: TAGS.indexOf(g.tag), h: 0.2 * Math.max(LIFE.k, 0.4) });      // what the model star is measured against
   if (S.time < missionUntil) list.push({ p: [0, S.floorY + 1.235, -0.86], k: TAGS.indexOf('MISSION COMPLETE'), h: 0.04 });
   if (MOONS[G.i] && !G.anim && G.tex) { const h = Math.max(0.011, 0.085 * G.rad); for (const m of moonsOf(G)) list.push({ p: [m.p[0], m.p[1] + m.r + h * 0.9, m.p[2]], k: TAGS.indexOf(m.name), h }); }
   if (G.i === SYS && !G.anim) { const h = Math.max(0.022, 0.034 * G.rad);
@@ -2063,7 +2071,7 @@ function drawRideSheet() {
 // ───────────── The life of a star: a model star beyond the rail, from its cloud to whatever is left of it ─────────────
 // A stage: n name, row its name in the list, len seconds it is shown for, vis what is drawn, lasts how long it really takes, txt what happens,
 // k: points along it [how far through, age in years, width (Sun today = 1), surface in kelvin, mass (Sun = 1)]; brightness follows from width and temperature.
-const LIFE = { on: false, star: 1, s: 0, sT: 0, play: false, flash: 0, v: null, c: [0, 3.9, -7] };
+const LIFE = { on: false, star: 1, s: 0, sT: 0, play: false, flash: 0, v: null, c: [0, 3.9, -7], k: 1 };      // c: where the model star hangs; k: its scale (in your own room it is smaller and nearer)
 const LIFE_STARS = [
   { name: 'A RED DWARF', sub: 'a fifth of the Sun\'s mass', stages: [
     { n: 'A COLD CLOUD', row: 'A cold cloud', len: 6, vis: 'cloud', lasts: 'a few hundred thousand years', k: [[0, 0, 0, 10, 0.2], [1, 2e5, 0, 10, 0.2]],
@@ -2137,11 +2145,11 @@ function lifeColour(T) {          // the colour of something glowing at that tem
   const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307, c = [r, g, b].map(v => Math.max(0, Math.min(255, v)) / 255), m = Math.max(...c);
   return c.map(v => Math.pow(v / m, 1.5 + 1.1 * Math.min(1, Math.max(0, (6500 - T) / 1500)))); }      // (cool stars most of all: a red giant should look red)
 const SUN_COL = lifeColour(5772);
-const lifeR = R => 0.34 * Math.pow(R, 0.33);          // how big the model is drawn: squeezed, or a red giant would not fit in the sky
+const lifeR = R => 0.34 * Math.pow(R, 0.33) * LIFE.k;          // how big the model is drawn: squeezed, or a red giant would not fit in the sky
 const LIFE_TILT = 35 * D, LIFE_ROT = new Float32Array([1, 0, 0, 0, Math.cos(LIFE_TILT), Math.sin(LIFE_TILT), 0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)]), LIFE_B = [0, -Math.sin(LIFE_TILT), Math.cos(LIFE_TILT)];   // the disc, and the plane of the orbits, lean towards you
 const LIFE_ORBITS = [['ORBIT OF MERCURY', 83.2], ['ORBIT OF VENUS', 155.5], ['ORBIT OF THE EARTH', 215], ['ORBIT OF MARS', 327.6], ['ORBIT OF JUPITER', 1118.6]];      // in widths of the Sun's radius
 function startLife() { if (LIFE.on) return; rideOff(); WORLD = 0; S.worldNext = 0; S.groundT = 0; S.ground = 0; S.warp = null; S.at = -1; S.fspeed = 0; S.pos = [0, 0, 0]; S.deep = S.deepT = 0; S.wf = 1; S.wfT = 0; G.grabs = [];
-  Object.assign(LIFE, { on: true, s: 0, sT: 0, play: true, flash: 0, v: null }); soundSpace(); whoosh(2);
+  Object.assign(LIFE, { on: true, s: 0, sT: 0, play: true, flash: 0, v: null, k: AR ? 0.3 : 1, c: AR ? [0, 1.7, -2.6] : [0, 3.9, -7] }); soundSpace(); whoosh(2);
 }
 function lifeOff() { if (!LIFE.on) return; LIFE.on = false; LIFE.play = false; LIFE.flash = 0; LIFE.v = null; if (S.sheet === 'life') S.sheet = ''; }
 function lifePress(row) { const star = LIFE_STARS[LIFE.star];
@@ -2174,14 +2182,14 @@ function lifeView() {             // what to draw for this moment: the ball, its
     else { const q = (p - 0.09) / 0.91; v.r = 0; v.dust.push([3, r0 * 0.6 + (4.3 - r0 * 0.6) * Math.pow(q, 0.6), 1.7 - 0.6 * q]); v.glow = [1.1 + 2.4 * Math.sqrt(q), 3.4 * Math.exp(-q * 2.4) + 0.45, [.8, .88, 1]]; } }
   else if (vis === 'rem') { v.dim = 1; v.col = [.75, .88, 1]; v.dust.push([3, 4.3 + 1.2 * p, 1.1 * (1 - 0.9 * sm(0.3, 1, p))], [4, 0, 1]); v.glow = [0.13, 1.1, [.7, .85, 1]]; }
   if (R && vis !== 'sn') { const C = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]], sc = lifeR(R) / R, nn = norm(add3(S.head, C, -1)), rt = norm(cross([0, 1, 0], nn)), up = cross(nn, rt);
-    LIFE_ORBITS.forEach(([tag, a], j) => { const rad = sc * a; if (rad > 14 || rad < v.r * 0.98) return; const al = 1 - sm(8, 14, rad);            // the planets' orbits, at the star's own scale: they come into view as it swells
-      v.rings.push({ rad, flat: 1, col: [.18, .5, .56], a: al, tag: rad < 7.5 && rad > v.r * 1.04 ? tag : null, tp: add3(add3(add3(C, [1, 0, 0], rad * Math.cos((10 + 13 * j) * D)), LIFE_B, rad * Math.sin((10 + 13 * j) * D)), [0.12 + 0.1 * tagW[TAGS.indexOf(tag)] / 48, 0.16, 0]) }); });      // (each name starts on its own ring, on the near side, a little further round than the last)
-    for (const [tag, a, c] of [['THE SUN TODAY, SAME SCALE', 1, [.6, .5, .22]], ['THE EARTH, SAME SCALE', 0.00917, [.25, .42, .7]]]) { const rad = sc * a; if (rad < 0.035 || rad > 8 || (a === 1 && Math.abs(R - 1) < 0.12)) continue;
-      v.rings.push({ rad, col: c, a: 1, tag, tp: add3(add3(C, up, rad + 0.14), nn, v.r + 0.1) }); } }
+    LIFE_ORBITS.forEach(([tag, a], j) => { const K = LIFE.k, rad = sc * a; if (rad > 14 * K || rad < v.r * 0.98) return; const al = 1 - sm(8 * K, 14 * K, rad);            // the planets' orbits, at the star's own scale: they come into view as it swells
+      v.rings.push({ rad, flat: 1, col: [.18, .5, .56], a: al, tag: rad < 7.5 * K && rad > v.r * 1.04 ? tag : null, tp: add3(add3(add3(C, [1, 0, 0], rad * Math.cos((10 + 13 * j) * D)), LIFE_B, rad * Math.sin((10 + 13 * j) * D)), [(0.12 + 0.1 * tagW[TAGS.indexOf(tag)] / 48) * K, 0.16 * K, 0]) }); });      // (each name starts on its own ring, on the near side, a little further round than the last)
+    for (const [tag, a, c] of [['THE SUN TODAY, SAME SCALE', 1, [.6, .5, .22]], ['THE EARTH, SAME SCALE', 0.00917, [.25, .42, .7]]]) { const K = LIFE.k, rad = sc * a; if (rad < 0.035 * K || rad > 8 * K || (a === 1 && Math.abs(R - 1) < 0.12)) continue;
+      v.rings.push({ rad, col: c, a: 1, tag, tp: add3(add3(C, up, rad + 0.14 * K), nn, v.r + 0.1 * K) }); } }
   return v;
 }
 const lifeDust = program(`
-  in vec4 aS; uniform mat4 uPV; uniform mat3 uRot; uniform vec3 uC; uniform float uMode, uA, uTime, uPx, uAmt, uR; out vec3 vCol;
+  in vec4 aS; uniform mat4 uPV; uniform mat3 uRot; uniform vec3 uC; uniform float uMode, uA, uTime, uPx, uAmt, uR, uK; out vec3 vCol;
   vec3 dir(vec2 s){ float z = s.x*2.-1., a = s.y*6.2831853, q = sqrt(max(1.-z*z, 0.)); return vec3(q*cos(a), z, q*sin(a)); }
   void main(){ vec3 d = dir(aS.xy), p, col; float sz = .06, a = 1.;
     if (uMode < .5) {                                                          /* a cloud falling in, and flattening into a turning disc */
@@ -2202,8 +2210,8 @@ const lifeDust = program(`
     } else {                                                                   /* the two beams of a pulsar */
       float sg = aS.x < .5 ? -1. : 1., t = aS.z, sp = uTime*6.; vec3 m = vec3(sin(.75)*cos(sp), cos(.75), sin(.75)*sin(sp));
       p = sg*m*(.03+3.2*t) + d*(.015+.1*t)*aS.w; col = vec3(.6, .82, 1.); a = (1.-t)*(1.-t)*1.8; sz = .04; }
-    gl_Position = uPV*vec4(uC + uRot*p, 1.); float dist = max(gl_Position.w, .05);
-    gl_PointSize = clamp(uPx*sz*650./dist, 1.5, 30.*uPx); vCol = col*a*uAmt*.17*smoothstep(.3, 1.6, dist); }`, `
+    gl_Position = uPV*vec4(uC + uRot*p*uK, 1.); float dist = max(gl_Position.w, .05);
+    gl_PointSize = clamp(uPx*sz*uK*650./dist, 1.5, 30.*uPx); vCol = col*a*uAmt*.17*smoothstep(.3, 1.6, dist); }`, `
   in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*2.2)*(1.-r2), 1.); }`);
 const LIFEN = 14000, lifeVao = (() => { let seed = 1983; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   const v = new Float32Array(LIFEN * 4); for (let i = 0; i < v.length; i++) v[i] = rnd(); return vao(lifeDust, v, [['aS', 4]]); })();
@@ -2218,10 +2226,10 @@ function drawLife(PVF, eye) {     // called with the deck already drawn, so the 
     gl.enable(gl.DEPTH_TEST); }
   if (v.fx > 0.01 && v.r > 0.002) drawSunFx(PVF, eye, C, q, v.r, v.col, v.fx * v.dim * (0.25 + 0.75 * v.look.conv));
   if (v.dust.length) { gl.useProgram(lifeDust.p); gl.uniformMatrix4fv(lifeDust.u.uPV, false, PVF); gl.uniformMatrix3fv(lifeDust.u.uRot, false, LIFE_ROT); gl.uniform3fv(lifeDust.u.uC, C);
-    gl.uniform1f(lifeDust.u.uTime, S.time); gl.uniform1f(lifeDust.u.uPx, S.px || 1); gl.uniform1f(lifeDust.u.uR, v.r); gl.bindVertexArray(lifeVao.v);
+    gl.uniform1f(lifeDust.u.uTime, S.time); gl.uniform1f(lifeDust.u.uPx, S.px || 1); gl.uniform1f(lifeDust.u.uR, v.r / LIFE.k); gl.uniform1f(lifeDust.u.uK, LIFE.k); gl.bindVertexArray(lifeVao.v);
     for (const [mode, A, amt] of v.dust) if (amt > 0.01) { gl.uniform1f(lifeDust.u.uMode, mode); gl.uniform1f(lifeDust.u.uA, A); gl.uniform1f(lifeDust.u.uAmt, amt); gl.drawArrays(gl.POINTS, 0, mode === 1 || mode === 4 ? 1800 : LIFEN); } }
   if (v.glow && v.glow[1] > 0.01) { gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PVF); gl.uniform3fv(coronaProg.u.uC, C); gl.uniform3fv(coronaProg.u.uR, rt); gl.uniform3fv(coronaProg.u.uU, up);
-    gl.uniform1f(coronaProg.u.uRad, v.glow[0]); gl.uniform3fv(coronaProg.u.uCol, v.glow[2]); gl.uniform1f(coronaProg.u.uTime, S.time); gl.uniform1f(coronaProg.u.uAmt, v.glow[1] * (v.n.st.vis === 'wd' ? v.dim : 1)); gl.uniform1f(coronaProg.u.uInner, 0);
+    gl.uniform1f(coronaProg.u.uRad, v.glow[0] * LIFE.k); gl.uniform3fv(coronaProg.u.uCol, v.glow[2]); gl.uniform1f(coronaProg.u.uTime, S.time); gl.uniform1f(coronaProg.u.uAmt, v.glow[1] * (v.n.st.vis === 'wd' ? v.dim : 1)); gl.uniform1f(coronaProg.u.uInner, 0);
     gl.bindVertexArray(coronaVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
 }
 const lifeYears = y => y >= 1e12 ? (y < 1e13 ? (y / 1e12).toFixed(1) : Math.round(y / 1e12).toLocaleString('en-GB')) + ' trillion years' : y >= 1e9 ? (y < 1e11 ? (y / 1e9).toFixed(2) : Math.round(y / 1e9)) + ' billion years'
@@ -2343,7 +2351,7 @@ const addMeteor = (a, b, dur, bright) => { if (S.meteors.length < MAXM) S.meteor
 function lookWord(w) { if (w[1] > 0.88) return 'look overhead';
   return 'look ' + ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(((Math.atan2(w[0], -w[2]) / D + 360) % 360) / 45) % 8]; }
 function startEvent(type) {
-  if (EV.cur || S.away > 0.3 || WORLD || S.off || RIDE.on || LIFE.on) return;           // (the sky events belong to the sky of home)
+  if (EV.cur || S.away > 0.3 || WORLD || S.off || RIDE.on || LIFE.on || ROOM.a > 0.5) return;           // (the sky events belong to the sky of home)
   const lake = S.groundT === 1, all = lake ? ['fireball', 'shower', 'aurora', 'supernova'] : ['supernova'];
   let pool = all.filter(t => t !== EV.last); if (!pool.length) pool = all;       // floating in space only the supernova can be seen, so it may repeat
   type = type || pool[Math.floor(Math.random() * pool.length)];
@@ -2358,7 +2366,7 @@ function startEvent(type) {
   ev.look = lookWord(ev.dir); EV.cur = ev; EV.last = type; signal(); note('events', type);
 }
 function updateEvents(dt) {
-  if (!EV.cur) { if (S.intro > EV.next && S.away < 0.3 && !S.off && !S.warp && !WORLD && !LIFE.on) startEvent(); S.aurora += (0 - S.aurora) * Math.min(1, dt); S.nova = 0; return; }
+  if (!EV.cur) { if (S.intro > EV.next && S.away < 0.3 && !S.off && !S.warp && !WORLD && !LIFE.on && ROOM.a < 0.5) startEvent(); S.aurora += (0 - S.aurora) * Math.min(1, dt); S.nova = 0; return; }
   const e = EV.cur; e.t += dt;
   if (e.type === 'shower' && e.t > 3) { e.acc += dt * 1.7 * Math.min(1, (e.t - 3) / 8) * Math.min(1, (e.dur - e.t) / 10);       // they all stream away from one point
     while (e.acc > 1) { e.acc -= 1; const r = e.dir, q0 = norm(cross(r, [Math.random() - .5, Math.random() - .5, Math.random() - .5])), th = (12 + Math.random() * 50) * D, len = (8 + Math.random() * 16) * D;
@@ -2442,6 +2450,7 @@ function update(dt, forward, stick, stickY, rays, fly) {
     if (fly) { S.fdir = unSky(A, fly.dir); if (S.groundT) toggleGround(); }
     if (S.fspeed > 0.001) { const lim = Math.max(MAXPC, plen()); S.pos = add3(S.pos, S.fdir, S.fspeed * dt / LY); const r = plen(); if (r > lim) S.pos = S.pos.map(x => x * lim / r); } }      // free flight ends 1,500 light-years out; from a far destination you can roam, but not further away
   updateRide(dt, stickY || 0); updateLife(dt, stickY || 0);
+  { const t = AR && !BH.on && !inside() ? 1 - S.ground : 0; ROOM.a += (t - ROOM.a) * Math.min(1, dt * 3); if (Math.abs(t - ROOM.a) < 0.002) ROOM.a = t; }
   { const r = plen(), k = r > 1 ? Math.log(1 + r / FARL) / r : 1 / FARL, q = S.pos.map(x => x * k);      // logarithmic, so a trip of 60 million light-years does not become a blur
     const tr = dt > 0 ? add3(q, S.farQ, -1).map(x => x / dt * 0.1) : [0, 0, 0], tl = Math.hypot(tr[0], tr[1], tr[2]);
     S.farTrail = tl > 0.1 ? tr.map(x => x * 0.1 / tl) : tr; S.farQ = q; S.far = RIDE.on ? 0 : Math.min(1, Math.max(0, (r * LY - 6000) / 40000)); }      // (on the scale ride the real galaxies are drawn instead)
@@ -2546,7 +2555,8 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.uniform3fv(bg.u.uSoil, WORLDS[WORLD].soil || [0, 0, 0]); gl.uniform3fv(bg.u.uShine, WORLDS[WORLD].shine || [0, 0, 0]);
   gl.uniform1f(bg.u.uAurora, S.aurora); gl.uniform1f(bg.u.uFlash, S.flash); gl.uniform4f(bg.u.uNova, S.novaDir[0], S.novaDir[1], S.novaDir[2], S.nova); gl.uniform4f(bg.u.uFire, S.fireDir[0], S.fireDir[1], S.fireDir[2], S.fireAmt);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, mwTex); gl.uniform1i(bg.u.uMW, 0);
-  gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (ROOM.a < 0.999) { if (ROOM.a > 0.001) { gl.enable(gl.BLEND); gl.blendColor(0, 0, 0, 1 - ROOM.a); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA); }      // (coming back from the lake, the sky's own darkness thins out and your room appears)
+    gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }
 
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
   gl.useProgram(stars.p); gl.uniformMatrix4fv(stars.u.uPV, false, PV); gl.uniformMatrix3fv(stars.u.uSky, false, S.sky);
@@ -2637,7 +2647,8 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   drawPanel();
   if (inside()) drawInside(PVF, eye || [0, 0, 0]);
   gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-  gl.useProgram(deck.p); gl.uniformMatrix4fv(deck.u.uPV, false, PVF); gl.uniform1f(deck.u.uFloor, S.floorY); gl.uniform1f(deck.u.uInside, inside() ? 1 : 0); { const L = starLight(); gl.uniform3fv(deck.u.uStarP, L.p); gl.uniform3fv(deck.u.uStarC, L.c); }
+  gl.useProgram(deck.p); gl.uniformMatrix4fv(deck.u.uPV, false, PVF); gl.uniform1f(deck.u.uFloor, S.floorY); gl.uniform1f(deck.u.uInside, inside() || ROOM.a > 0.5 ? 1 : 0);      // (in your room only the console stands: your own floor is the deck)
+  { const L = starLight(); gl.uniform3fv(deck.u.uStarP, L.p); gl.uniform3fv(deck.u.uStarC, L.c); }
   gl.uniform1f(deck.u.uTime, S.time); gl.bindVertexArray(deckVao.v);
   if (S.ground < 0.99) { gl.uniform1f(deck.u.uFade, 1 - S.ground); gl.drawElements(gl.TRIANGLES, stationCount, gl.UNSIGNED_INT, 0); }      // the station appears as the lake falls away
   gl.uniform1f(deck.u.uFade, 1); gl.drawElements(gl.TRIANGLES, deckCount - stationCount, gl.UNSIGNED_INT, stationCount * 4);
@@ -2649,7 +2660,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   if (infoOn) { gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.bindVertexArray((inside() ? infoVaoIn : infoVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
   gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
-  if (!inside()) { gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 72, gl.UNSIGNED_INT, 0); }
+  if (!inside() && ROOM.a < 0.5) { gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 72, gl.UNSIGNED_INT, 0); }
   if (S.at >= 0 && S.at < DSO0) {                    // you have stopped at a star: here it is as a sun
     { const i = S.at, dir = applySky(S.sky, norm(add3(pickPos[i], S.pos, -1))), dbl = DOUBLES[PICK[i][3]], mid = add3(S.head, dir, dbl ? 4.2 : 3.5);
       const fx = [], sun = (pos, r, bv, spin, M) => { const c = starColour(bv), q = qaxis([0, 1, 0], S.time * spin), T = 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62)), look = starLook(T, M === null ? 1 : Math.sqrt(Math.pow(10, 0.4 * (4.83 - M))) / Math.pow(T / 5772, 2));   // its width, roughly, from how bright and how hot it is
@@ -2728,20 +2739,22 @@ document.addEventListener('visibilitychange', () => { if (Snd.ctx && !xrSession)
 const vrBtn = document.getElementById('vr');
 document.getElementById('where').textContent = 'The real sky over ' + PLACE + ' right now, mirrored in a still lake: ' + starCount.toLocaleString('en-GB') +
   ' catalogued stars, ' + DUST.toLocaleString('en-GB') + ' specks of Milky Way star dust and all 88 constellations. Look at a constellation to light it up; point at a star to see how old its light is; click a planet to bring it to you, then drag to turn it and scroll to resize. You stand on an observation deck: look down and north for its console. Click a star to travel to it; hold W to fly freely; H brings you home.';
+const arBtn = document.getElementById('ar');
 if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then(ok => {
   if (ok) { vrBtn.disabled = false; vrBtn.textContent = 'Step outside'; } else vrBtn.textContent = 'No headset found';
 }).catch(() => vrBtn.textContent = 'VR unavailable'); else vrBtn.textContent = location.protocol === 'https:' || location.hostname === 'localhost' ? 'No VR in this browser' : 'VR needs https or localhost';
+if (navigator.xr) navigator.xr.isSessionSupported('immersive-ar').then(ok => { if (ok) arBtn.style.display = ''; }).catch(() => {});      // a headset that can show the room through its cameras
 
-vrBtn.addEventListener('click', async () => {
+const enter = async (mode, btn) => {
   startAudio(); if (xrSession) return;
   let session = null;
   try {
-    session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'hand-tracking'] });
     await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, alpha: false }), depthNear: 0.1, depthFar: 100 });
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, alpha: mode === 'immersive-ar' }), depthNear: 0.1, depthFar: 100 });
     let space, floorY = 0, head0 = null;      // a floor-level space puts the deck under your real feet; without one, assume standing height
     try { space = await session.requestReferenceSpace('local-floor'); } catch (e) { space = await session.requestReferenceSpace('local'); floorY = -1.6; }
-    xrSession = session; clearRoom(); restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = 1; soundSpace();
+    xrSession = session; AR = mode === 'immersive-ar'; rideOff(); lifeOff(); clearRoom(); restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = AR ? 0 : 1; ROOM.a = AR ? 1 : 0; if (AR) { WORLD = 0; S.worldNext = 0; S.pos = [0, 0, 0]; S.warp = null; S.at = -1; } soundSpace();      // in your room you start among the stars; the lake is one press away
     let prev = 0, aWas = false, bWas = false, head = [0, 0, 0], headF = [0, 0, -1], anchor = [0, 0, 0], pace = 0, paceAt = 4;
     let tapSun = null, tapPart = null;
     const pending = new Map();      // trigger pressed on empty sky: a tap changes the constellation view, holding flies
@@ -2763,7 +2776,7 @@ vrBtn.addEventListener('click', async () => {
       if (tapPart && tapPart.src === e.inputSource) { const quick = S.time - tapPart.t0 < 0.3, p = tapPart.p; tapPart = null; if (quick) selectPart(p); }
       if (tapSun && tapSun.src === e.inputSource) { const quick = S.time - tapSun.t0 < 0.3; tapSun = null; if (quick && G.i === SYS && !G.anim) zoomBody(SUN, head); } const t0 = pending.get(e.inputSource); pending.delete(e.inputSource); if (t0 !== undefined && S.time - t0 < 0.35) cycleMode(); });
     session.addEventListener('squeeze', toggleGround);
-    session.addEventListener('end', () => { xrSession = null; clearRoom(); ctl.clear(); beamCount = 0; pending.clear(); S.dustN = DUST; S.mirN = MIRROR_DUST; last = performance.now(); cancelAnimationFrame(flatRaf); flatRaf = requestAnimationFrame(flatFrame); });
+    session.addEventListener('end', () => { xrSession = null; if (AR) { AR = false; ROOM.a = 0; lifeOff(); gl.colorMask(true, true, true, true); S.groundT = 1; } clearRoom(); ctl.clear(); beamCount = 0; pending.clear(); S.dustN = DUST; S.mirN = MIRROR_DUST; last = performance.now(); cancelAnimationFrame(flatRaf); flatRaf = requestAnimationFrame(flatFrame); });
     const onFrame = (t, frame) => {
       session.requestAnimationFrame(onFrame);
       const pose = frame.getViewerPose(space); if (!pose) return;
@@ -2798,6 +2811,7 @@ vrBtn.addEventListener('click', async () => {
       updateTags(hints);
       const layer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+      if (AR) { gl.colorMask(true, true, true, true); gl.clearColor(0, 0, 0, ROOM.dim * ROOM.a); gl.clear(gl.COLOR_BUFFER_BIT); }      // nothing drawn: your room, with its light turned down a little
       for (const view of pose.views) {
         const vp = layer.getViewport(view); gl.viewport(vp.x, vp.y, vp.width, vp.height);
         const VF = view.transform.inverse.matrix, V = new Float32Array(VF); V[12] = V[13] = V[14] = 0;   // the stars are infinitely far away
@@ -2806,8 +2820,9 @@ vrBtn.addEventListener('click', async () => {
       }
     };
     session.requestAnimationFrame(onFrame);
-  } catch (err) { vrBtn.textContent = 'Could not start VR'; console.error(err); if (session) session.end().catch(() => {}); }
-});
+  } catch (err) { btn.textContent = mode === 'immersive-ar' ? 'Could not show your room' : 'Could not start VR'; console.error(err); if (session) session.end().catch(() => {}); }
+};
+vrBtn.addEventListener('click', () => enter('immersive-vr', vrBtn)); arBtn.addEventListener('click', () => enter('immersive-ar', arBtn));
 </script>
 </body>
 </html>
