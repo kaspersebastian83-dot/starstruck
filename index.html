@@ -109,7 +109,7 @@ function perspective(fovy, aspect, n, f) { const t = 1 / Math.tan(fovy / 2), o =
 let RIDE_SKY = null;             // set while the scale ride is running: how the sky is turned then
 let WORLD = 0;                   // which world you stand on: an index into WORLDS
 let AR = false;                  // the headset is showing your real room, with the sky in it
-const ROOM = { a: 0, dim: 0.55 };   // a: how much of the room shows (0 at the lake, by the black hole or inside the station); dim: how far its light is turned down so that the stars can be seen
+const ROOM = { a: 0, dim: 0.55, mode: '' };   // a: how much of the room shows (0 at the lake, by the black hole or inside the station); dim: how far its light is turned down so that the stars can be seen
 const WORLDS = [                  // home: which planet's place in the Solar System you see from; pole and W: how the body is turned (IAU values: pole RA and Dec, prime meridian at J2000 and degrees per day)
   { id: 'earth', name: 'EARTH', place: PLACE, line: 'A still lake at night, under the sky of home.', home: 2, air: 1 },
   { id: 'moon', name: 'THE MOON', place: 'the Moon, near Clavius', line: 'Earth hangs in the sky, four times the size of our Moon, and never sets.', home: 2, air: 0, pole: [269.9949, 66.5392], W: [38.3213, 13.17635815], lat: -58.4, lon: -14.4,
@@ -144,10 +144,8 @@ const unSky = (S, w) => [S[0] * w[0] + S[1] * w[1] + S[2] * w[2], S[3] * w[0] + 
 // ───────────── GL setup ─────────────
 const canvas = document.getElementById('c');
 const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, xrCompatible: true });
-{ const bf = gl.blendFunc.bind(gl), en = gl.enable.bind(gl), di = gl.disable.bind(gl); let add = false, on = false;        // in your room, glowing things (stars, haze, names) are added to the camera picture; solid things (globes, the console) cover it
-  const fix = () => { if (AR) gl.colorMask(true, true, true, !(on && add)); };
-  gl.blendFunc = (a, b) => { bf(a, b); add = a === gl.ONE && b === gl.ONE; fix(); };
-  gl.enable = c => { en(c); if (c === gl.BLEND) { on = true; fix(); } }; gl.disable = c => { di(c); if (c === gl.BLEND) { on = false; fix(); } }; }
+// Everything that glows (stars, haze, names) is blended as colour only: gl.blendFuncSeparate(ONE, ONE, ZERO, ONE) leaves the picture's alpha alone.
+// In a headset that shows your room, that makes it light added to what the cameras see, while solid things (drawn without blending) cover it.
 if (!gl) { document.getElementById('where').textContent = 'This browser has no WebGL2, so the sky cannot be drawn.'; throw new Error('no webgl2'); }
 
 function program(vs, fs) {
@@ -875,7 +873,7 @@ function drawSystem(PVF, eye) {
     gl.useProgram(ringProg.p); gl.uniformMatrix4fv(ringProg.u.uPV, false, PVF); gl.uniformMatrix4fv(ringProg.u.uModel, false, modelMatrix(sat.q, sat.w, sat.r));
     gl.uniform3fv(ringProg.u.uLight, sat.light); gl.uniform3fv(ringProg.u.uCentre, sat.w); gl.uniform1f(ringProg.u.uRad, sat.r); gl.uniform1i(ringProg.u.uTex, 0);
     gl.bindTexture(gl.TEXTURE_2D, ringTex); gl.bindVertexArray(ringVao.v); gl.drawElements(gl.TRIANGLES, ringCount, gl.UNSIGNED_INT, 0); }
-  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PVF); gl.uniformMatrix4fv(orb.u.uModel, false, modelMatrix(G.q, G.pos, G.rad));
   gl.uniform3f(orb.u.uCol, 0.10, 0.36, 0.40); gl.bindVertexArray(orbVao.v);
   for (let i = 0; i < PLANETS.length; i++) gl.drawArrays(gl.LINE_STRIP, i * 129, 129);
@@ -984,7 +982,7 @@ function drawStar(PVF, eye, pos, q, r, col, look, dim, seed) {      // the ball 
   gl.uniform3fv(starProg.u.uEye, eye); gl.uniform3fv(starProg.u.uCol, col); gl.uniform1f(starProg.u.uTime, S.time); gl.uniform1f(starProg.u.uCell, look.cell); gl.uniform1f(starProg.u.uCon, look.con); gl.uniform1f(starProg.u.uGran, look.gran); gl.uniform1f(starProg.u.uSpot, look.spot);
   gl.uniform1f(starProg.u.uFlare, look.flare); gl.uniform1f(starProg.u.uLimb, look.limb); gl.uniform1f(starProg.u.uDim, dim); gl.uniform1f(starProg.u.uSeed, seed || 0); gl.uniform1f(starProg.u.uChurn, look.churn);
   gl.uniform1f(starProg.u.uShell, 0); gl.uniform1f(starProg.u.uGrow, 1); gl.bindVertexArray(starBall.v); gl.drawElements(gl.TRIANGLES, starBall.n, gl.UNSIGNED_INT, 0);
-  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   if (look.fuzz > 0.01) { gl.uniform1f(starProg.u.uShell, 1 + look.fuzz); gl.uniform1f(starProg.u.uGrow, 1 + look.fuzz); gl.drawElements(gl.TRIANGLES, starBall.n, gl.UNSIGNED_INT, 0); }
 }
 const STAR_LIGHT = { p: [0, 0, 0], c: [0, 0, 0] };          // the star you are with lights the deck
@@ -1189,7 +1187,7 @@ function drawVisitor(PVF, eye) {  // the comet or the station in the room
   else ISSP.forEach((P, p) => { const x = issXf(p); if (x.sc < 0.02) return;
     gl.uniform3fv(solid.u.uPc, P.c); gl.uniform3fv(solid.u.uPp, x.pos); gl.uniform1f(solid.u.uPs, x.sc); gl.uniform1f(solid.u.uHi, p === G.hov && G.part < 0 ? 1 : 0);
     gl.drawElements(gl.TRIANGLES, P.n, gl.UNSIGNED_INT, P.i0 * 4); });
-  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   if (G.i === COMET) { const T = G.light.map(x => -x), B = norm(cross(T, Math.abs(T[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0]));       // however you turn the nucleus, the tail keeps pointing away from the Sun
     { const n = norm(add3(eye, G.pos, -1)), r = norm(cross(Math.abs(n[1]) < 0.98 ? [0, 1, 0] : [1, 0, 0], n)), u = cross(n, r);            // the coma: gas boiling off all round
       gl.useProgram(coronaProg.p); gl.uniformMatrix4fv(coronaProg.u.uPV, false, PVF); gl.uniform3fv(coronaProg.u.uC, G.pos); gl.uniform3fv(coronaProg.u.uR, r); gl.uniform3fv(coronaProg.u.uU, u);
@@ -1319,7 +1317,7 @@ function drawPanel() {
   x.strokeStyle = T + '.25)'; x.beginPath(); x.moveTo(40, 84); x.lineTo(984, 84); x.moveTo(40, 299); x.lineTo(984, 299); x.stroke();
   const sp = v => { try { x.letterSpacing = v; } catch (e) {} };
   x.textAlign = 'left'; x.fillStyle = T + '.95)'; x.font = '300 30px ' + FONT; sp('0.34em'); x.fillText('OBSERVATION DECK', 40, 50);
-  x.textAlign = 'right'; x.fillStyle = A; x.font = '500 15px ' + FONT; sp('0.2em'); x.fillText((WORLD ? WORLDS[WORLD].name : PLACE).toUpperCase(), 984, 110); x.textAlign = 'left';
+  x.textAlign = 'right'; x.fillStyle = A; x.font = '500 15px ' + FONT; sp('0.2em'); x.fillText(AR && !WORLD && !S.groundT ? 'YOUR ROOM   ·   ' + (ROOM.mode === 'alpha-blend' ? 'CAMERAS ON' : ROOM.mode === 'additive' ? 'SEE-THROUGH' : 'THIS HEADSET SHOWS NO ROOM (' + ROOM.mode.toUpperCase() + ')') : (WORLD ? WORLDS[WORLD].name : PLACE).toUpperCase(), 984, 110); x.textAlign = 'left';
   { const ev = EV.cur; x.lineWidth = 2; x.strokeStyle = ev ? A : T + '.6)'; x.fillStyle = ev ? 'rgba(255,166,74,.16)' : T + '.06)';      // the sky watch: press to look for something, lights up when something happens
     x.beginPath(); x.roundRect(644, 26, 340, 46, 12); x.fill(); x.stroke();
     x.textAlign = 'center'; x.fillStyle = ev ? A : T + '.95)'; x.font = '500 16px ' + FONT; sp('0.12em');
@@ -1921,7 +1919,7 @@ function drawWorldSky(PV) {       // Earth over the Moon, Phobos over Mars, Satu
       gl.uniform3f(ringProg.u.uCentre, d[0] * 50, d[1] * 50, d[2] * 50); gl.uniform1f(ringProg.u.uRad, r); gl.uniform1i(ringProg.u.uTex, 0); gl.bindTexture(gl.TEXTURE_2D, ringTex); gl.bindVertexArray(ringVao.v);
       gl.drawElements(gl.TRIANGLES, ringCount, gl.UNSIGNED_INT, 0); gl.depthMask(true); gl.disable(gl.BLEND); gl.useProgram(globe.p); } }
   gl.uniform4f(globe.u.uRing, 0, 0, 0, 0); gl.uniform4f(globe.u.uTint, 0, 0, 0, 0); gl.uniform1f(globe.u.uDim, 1);
-  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(stars.p);
+  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); gl.useProgram(stars.p);
 }
 const worldCv = document.createElement('canvas'); worldCv.width = 1024; worldCv.height = 800;
 const worldSheetTex = textTexture(worldCv); let worldKey = null;
@@ -2013,7 +2011,7 @@ function drawRideNear(PV) {       // the Earth and the Moon as globes, while the
   const gst = (280.46061837 + 360.98564736629 * (S.sim / 86400000 + 2440587.5 - 2451545)) * D, home = RIDE.n.map(x => -x * d);
   ball(home, R, worldTex(2), [Math.cos(gst), Math.sin(gst), 0], [0, 0, 1], [0.3, 0.52, 1]);
   const md = S.moonDir, mx = md.map(x => -x), my = norm(add3([0, 0, 1], mx, -mx[2])); ball(add3(home, md, 3.844e8), 1.7374e6 * k, moonTex, mx, my, [0, 0, 0]);
-  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(stars.p);
+  gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); gl.useProgram(stars.p);
 }
 function drawRideFar(PV, vpH) {   // everything that is drawn as light: orbits, the Sun's glow, clouds of comets, the galaxy, the galaxies
   const d = RIDE.d, k = 40 / d, sky = S.sky, sun = rideSun(), sunL = applySky(sky, sun), camPc = S.pos, ce = Math.cos(23.43928 * D), se = Math.sin(23.43928 * D);
@@ -2218,7 +2216,7 @@ const LIFEN = 14000, lifeVao = (() => { let seed = 1983; const rnd = () => { see
 function drawLife(PVF, eye) {     // called with the deck already drawn, so the rail hides what is behind it; leaves the depth test on, depth writing off and additive blending
   const v = LIFE.v; if (!v) return; const C = [LIFE.c[0], LIFE.c[1] + S.floorY, LIFE.c[2]], q = qaxis([0, 1, 0], S.time * 0.05), nn = norm(add3(S.head, C, -1)), rt = norm(cross([0, 1, 0], nn)), up = cross(nn, rt);
   if (v.r > 0.002) drawStar(PVF, eye, C, q, v.r, v.col, v.look, v.dim, LIFE.star * 3.1);
-  gl.enable(gl.DEPTH_TEST); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   if (v.rings.length) { gl.useProgram(orb.p); gl.uniformMatrix4fv(orb.u.uPV, false, PVF); gl.bindVertexArray(circleVao.v);
     for (const g of v.rings) { const a = g.flat ? [1, 0, 0] : rt, b = g.flat ? LIFE_B : up; if (g.flat || g.rad > v.r) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);          // (a comparison circle smaller than the star is drawn across its face)
       gl.uniformMatrix4fv(orb.u.uModel, false, new Float32Array([a[0] * g.rad, a[1] * g.rad, a[2] * g.rad, 0, b[0] * g.rad, b[1] * g.rad, b[2] * g.rad, 0, 0, 0, 1, 0, C[0], C[1], C[2], 1]));
@@ -2535,7 +2533,7 @@ function drawRoom(PVF, eye) {     // the planet (or solar system) in the room
       gl.useProgram(ringProg.p); gl.uniformMatrix4fv(ringProg.u.uPV, false, PVF); gl.uniformMatrix4fv(ringProg.u.uModel, false, M);
       gl.uniform3fv(ringProg.u.uLight, G.light); gl.uniform3fv(ringProg.u.uCentre, G.pos); gl.uniform1f(ringProg.u.uRad, G.rad); gl.uniform1i(ringProg.u.uTex, 0);
       gl.bindTexture(gl.TEXTURE_2D, ringTex); gl.bindVertexArray(ringVao.v); gl.drawElements(gl.TRIANGLES, ringCount, gl.UNSIGNED_INT, 0); }
-    gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   }
 }
 function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
@@ -2558,7 +2556,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   if (ROOM.a < 0.999) { if (ROOM.a > 0.001) { gl.enable(gl.BLEND); gl.blendColor(0, 0, 0, 1 - ROOM.a); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA); }      // (coming back from the lake, the sky's own darkness thins out and your room appears)
     gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }
 
-  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   gl.useProgram(stars.p); gl.uniformMatrix4fv(stars.u.uPV, false, PV); gl.uniformMatrix3fv(stars.u.uSky, false, S.sky);
   gl.uniform1f(stars.u.uPx, vpH / 1000); gl.uniform1f(stars.u.uTime, S.time); gl.uniform1f(stars.u.uGround, S.ground); gl.uniform1f(stars.u.uAir, WORLDS[WORLD].air); gl.uniform1f(stars.u.uDip, WORLD === 4 ? -0.325 : 0);
   gl.uniform4f(stars.u.uBH, BH.h[0], BH.h[1], BH.h[2], BH.on ? 1 : 0); gl.uniform1f(stars.u.uBHg, Math.min(4, bhGain())); gl.uniform1i(stars.u.uBHI, 4);
@@ -2573,7 +2571,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       gl.uniformMatrix4fv(globe.u.uPV, false, PV); gl.uniform3f(globe.u.uLight, sun[0], sun[1] * m, sun[2]); gl.uniform1f(globe.u.uDim, m > 0 ? 1 : 0.5);
       gl.uniformMatrix4fv(globe.u.uModel, false, new Float32Array([X[0] * r, X[1] * r * m, X[2] * r, 0, Y[0] * r, Y[1] * r * m, Y[2] * r, 0, Z[0] * r, Z[1] * r * m, Z[2] * r, 0, d[0] * 50, d[1] * 50 * m, d[2] * 50, 1]));
       gl.drawElements(gl.TRIANGLES, sphereCount, gl.UNSIGNED_INT, 0); }
-    gl.uniform1f(globe.u.uDim, 1); gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(stars.p); }
+    gl.uniform1f(globe.u.uDim, 1); gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); gl.useProgram(stars.p); }
   if (WORLD && S.ground > 0.01 && S.wobj) drawWorldSky(PV);
   if (RIDE.on) drawRideNear(PV);
   if (S.streak > 0.01) {                             // fast travel: the stars smear into lines
@@ -2658,7 +2656,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.uniform3f(panelProg.u.uHover, 0, 0, 0); drawInfo();
   if (S.sheet) { if (S.sheet === 'log') drawLog(); if (S.sheet === 'deep') drawDeep(); if (S.sheet === 'worlds') drawWorlds(); if (S.sheet === 'time') drawTime(); if (S.sheet === 'bh') drawBH(); if (S.sheet === 'iss') drawRooms(); if (S.sheet === 'ride') drawRideSheet(); if (S.sheet === 'life') drawLifeSheet(); gl.bindTexture(gl.TEXTURE_2D, S.sheet === 'life' ? lifeTex : S.sheet === 'ride' ? rideTex : S.sheet === 'iss' ? inSheetTex : S.sheet === 'bh' ? bhSheetTex : S.sheet === 'time' ? timeTex : S.sheet === 'log' ? logTex : S.sheet === 'deep' ? deepTex : S.sheet === 'worlds' ? worldSheetTex : helpTex); gl.bindVertexArray((inside() ? helpVaoIn : helpVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
   if (infoOn) { gl.bindTexture(gl.TEXTURE_2D, infoTex); gl.bindVertexArray((inside() ? infoVaoIn : infoVao).v); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0); }
-  gl.depthMask(false); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.depthMask(false); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, S.floorY); gl.uniform3f(tagProg.u.uCol, 1, .62, .26);
   if (!inside() && ROOM.a < 0.5) { gl.bindTexture(gl.TEXTURE_2D, compassTex); gl.bindVertexArray(compassVao.v); gl.drawElements(gl.TRIANGLES, 72, gl.UNSIGNED_INT, 0); }
   if (S.at >= 0 && S.at < DSO0) {                    // you have stopped at a star: here it is as a sun
@@ -2669,7 +2667,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       else { const r1 = Math.min(0.7, starSize(i) * 0.8), r2 = r1 * dbl[1], sep = (r1 + r2) * 1.3, a = S.time * 0.16, rt = norm(cross(dir, [0, 1, 0])), dp = norm(add3(dir.map(x => x * 0.4), [0, 0.3, 0]));
         const o = add3(rt.map(x => x * Math.cos(a)), dp, Math.sin(a));                    // the two circle their common centre (not to scale)
         sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05, pickAbs[i]); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08, null); }
-      gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+      gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
       for (const [pos, q, r, c, amt] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, amt); } }
   if (LIFE.on) drawLife(PVF, eye || [0, 0, 0]);
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
@@ -2679,7 +2677,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   if (viewFull && beamCount) { gl.useProgram(beam.p); gl.uniformMatrix4fv(beam.u.uPV, false, PVF);
     gl.bindVertexArray(beamVao.v); gl.drawArrays(gl.LINES, 0, beamCount * 2); }
   gl.disable(gl.DEPTH_TEST); gl.depthMask(true);
-  if (LIFE.on && LIFE.flash > 0.003) { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.useProgram(fadeProg.p); gl.uniform1f(fadeProg.u.uF, 1 - 0.8 * LIFE.flash); gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }   // the supernova's flash
+  if (LIFE.on && LIFE.flash > 0.003) { gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE); gl.useProgram(fadeProg.p); gl.uniform1f(fadeProg.u.uF, 1 - 0.8 * LIFE.flash); gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }   // the supernova's flash
   if (S.wf > 0.003) { gl.enable(gl.BLEND); gl.blendFunc(gl.ZERO, gl.SRC_COLOR); gl.useProgram(fadeProg.p); gl.uniform1f(fadeProg.u.uF, S.wf); gl.bindVertexArray(bgVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }   // the blink between worlds
   gl.bindVertexArray(null);
 }
@@ -2754,7 +2752,7 @@ const enter = async (mode, btn) => {
     session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { antialias: true, alpha: mode === 'immersive-ar' }), depthNear: 0.1, depthFar: 100 });
     let space, floorY = 0, head0 = null;      // a floor-level space puts the deck under your real feet; without one, assume standing height
     try { space = await session.requestReferenceSpace('local-floor'); } catch (e) { space = await session.requestReferenceSpace('local'); floorY = -1.6; }
-    xrSession = session; AR = mode === 'immersive-ar'; rideOff(); lifeOff(); clearRoom(); restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = AR ? 0 : 1; ROOM.a = AR ? 1 : 0; if (AR) { WORLD = 0; S.worldNext = 0; S.pos = [0, 0, 0]; S.warp = null; S.at = -1; } soundSpace();      // in your room you start among the stars; the lake is one press away
+    xrSession = session; AR = mode === 'immersive-ar'; ROOM.mode = AR ? String(session.environmentBlendMode || 'unknown') : ''; rideOff(); lifeOff(); clearRoom(); restartIntro(); backToNow(); S.clockUntil = 0; S.groundT = S.ground = AR ? 0 : 1; ROOM.a = AR ? 1 : 0; if (AR) { WORLD = 0; S.worldNext = 0; S.pos = [0, 0, 0]; S.warp = null; S.at = -1; } soundSpace();      // in your room you start among the stars; the lake is one press away
     let prev = 0, aWas = false, bWas = false, head = [0, 0, 0], headF = [0, 0, -1], anchor = [0, 0, 0], pace = 0, paceAt = 4;
     let tapSun = null, tapPart = null;
     const pending = new Map();      // trigger pressed on empty sky: a tap changes the constellation view, holding flies
@@ -2776,7 +2774,7 @@ const enter = async (mode, btn) => {
       if (tapPart && tapPart.src === e.inputSource) { const quick = S.time - tapPart.t0 < 0.3, p = tapPart.p; tapPart = null; if (quick) selectPart(p); }
       if (tapSun && tapSun.src === e.inputSource) { const quick = S.time - tapSun.t0 < 0.3; tapSun = null; if (quick && G.i === SYS && !G.anim) zoomBody(SUN, head); } const t0 = pending.get(e.inputSource); pending.delete(e.inputSource); if (t0 !== undefined && S.time - t0 < 0.35) cycleMode(); });
     session.addEventListener('squeeze', toggleGround);
-    session.addEventListener('end', () => { xrSession = null; if (AR) { AR = false; ROOM.a = 0; lifeOff(); gl.colorMask(true, true, true, true); S.groundT = 1; } clearRoom(); ctl.clear(); beamCount = 0; pending.clear(); S.dustN = DUST; S.mirN = MIRROR_DUST; last = performance.now(); cancelAnimationFrame(flatRaf); flatRaf = requestAnimationFrame(flatFrame); });
+    session.addEventListener('end', () => { xrSession = null; if (AR) { AR = false; ROOM.a = 0; ROOM.mode = ''; lifeOff(); S.groundT = 1; } clearRoom(); ctl.clear(); beamCount = 0; pending.clear(); S.dustN = DUST; S.mirN = MIRROR_DUST; last = performance.now(); cancelAnimationFrame(flatRaf); flatRaf = requestAnimationFrame(flatFrame); });
     const onFrame = (t, frame) => {
       session.requestAnimationFrame(onFrame);
       const pose = frame.getViewerPose(space); if (!pose) return;
@@ -2811,7 +2809,7 @@ const enter = async (mode, btn) => {
       updateTags(hints);
       const layer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-      if (AR) { gl.colorMask(true, true, true, true); gl.clearColor(0, 0, 0, ROOM.dim * ROOM.a); gl.clear(gl.COLOR_BUFFER_BIT); }      // nothing drawn: your room, with its light turned down a little
+      if (AR) { gl.disable(gl.SCISSOR_TEST); gl.colorMask(true, true, true, true); gl.clearColor(0, 0, 0, ROOM.dim * ROOM.a); gl.clear(gl.COLOR_BUFFER_BIT); }      // nothing drawn: your room, with its light turned down a little
       for (const view of pose.views) {
         const vp = layer.getViewport(view); gl.viewport(vp.x, vp.y, vp.width, vp.height);
         const VF = view.transform.inverse.matrix, V = new Float32Array(VF); V[12] = V[13] = V[14] = 0;   // the stars are infinitely far away
