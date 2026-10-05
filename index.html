@@ -33,7 +33,7 @@
 <div id="ui">
   <h1>Starstruck</h1>
   <p id="where"></p>
-  <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0).</p>
+  <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0). Build 2026-10-05 20:20.</p>
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
     <button id="ar" style="display:none">Bring the sky into your room</button>
@@ -43,6 +43,13 @@
 </div>
 <script>
 'use strict';
+// ───────────── If something goes wrong, say so where it can be seen ─────────────
+const BUILD = '2026-10-05 20:20'; let FAULT = '';
+function fault(e, where) { try { console.error(where, e); if (FAULT) return; FAULT = (where ? where + ': ' : '') + (e && e.name ? e.name + ' · ' : '') + (e && e.message ? e.message : String(e));
+  const el = document.getElementById('xrerr'); if (el) { el.textContent = 'Something went wrong (build ' + BUILD + ') in ' + FAULT; el.style.display = ''; } } catch (x) {} }
+addEventListener('error', e => fault(e.error || e.message, 'the page' + (e.lineno ? ' (line ' + e.lineno + ')' : '')));
+addEventListener('unhandledrejection', e => fault(e.reason, 'a background step'));
+const safe = (where, fn) => { try { return fn(); } catch (e) { fault(e, where); } };       // one part failing must not stop the rest
 // ───────────── Where you are standing (override with ?lat=..&lon=..) ─────────────
 const q = new URLSearchParams(location.search);
 const LAT = parseFloat(q.get('lat') ?? '51.06');   // Heinsberg
@@ -1314,7 +1321,7 @@ const SHEETS = ['help', 'log', 'deep', 'worlds', 'time', 'birth'];
 const DISC = [['#8f8a86', '#3e3b39'], ['#f2deb0', '#8a6f3c'], ['#4f8fe0', '#12305e'], ['#e0683c', '#5e2414'], ['#e2c39a', '#7a5a3a'], ['#ecd9a4', '#7d6a3e'], ['#a9e6ea', '#3f7f88'], ['#4a6cf0', '#16246e']];
 let panelState = '';
 function drawPanel() {
-  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD + RIDE.on + LIFE.on + SAND.on + AR + ROOM.dim + (S.at === BHI || (S.warp && S.warp.star === BHI)); if (state === panelState) return; panelState = state;
+  const state = G.i + '|' + S.mode + '|' + S.groundT + '|' + Snd.muted + '|' + S.sheet + '|' + (EV.cur ? EV.cur.type + EV.cur.look : '') + '|' + logVer + '|' + WORLD + RIDE.on + LIFE.on + SAND.on + AR + ROOM.dim + FAULT + (S.at === BHI || (S.warp && S.warp.star === BHI)); if (state === panelState) return; panelState = state;
   const x = panelCx, T = 'rgba(70,215,230,', A = '#ffa64a';
   x.fillStyle = '#040910'; x.fillRect(0, 0, 1024, 512); x.textBaseline = 'middle'; x.lineWidth = 2;
   x.strokeStyle = T + '.55)'; x.strokeRect(14, 14, 996, 484);
@@ -1373,6 +1380,7 @@ function drawPanel() {
   { const m = MISSIONS.findIndex((_, i) => !LOG.done.includes(i)); x.textAlign = 'left'; x.font = '500 15px ' + FONT; sp('0.08em');              // what to try next
     x.fillStyle = A; x.fillText(m < 0 ? 'ALL MISSIONS COMPLETE' : 'MISSION ' + (LOG.done.length + 1) + ' OF ' + MISSIONS.length, 40, 470);
     if (m >= 0) { x.fillStyle = '#e6f2ff'; x.font = '400 16px ' + FONT; sp('0.03em'); x.fillText(MISSIONS[m].t, 230, 470); } }
+  if (FAULT) { x.fillStyle = '#040910'; x.fillRect(30, 452, 964, 36); x.textAlign = 'left'; x.fillStyle = '#ff8a5c'; x.font = '400 14px ' + FONT; sp('0.02em'); x.fillText(('FAULT · ' + FAULT).slice(0, 150), 40, 470, 944); }
   gl.bindTexture(gl.TEXTURE_2D, panelTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panelCv); gl.generateMipmap(gl.TEXTURE_2D);
 }
 function panelHit(o, d) {         // where does a ray meet the console? returns [u, v] or null
@@ -1593,7 +1601,8 @@ function triggerHint(c, off) {    // what would the trigger do for this hand rig
 
 // ───────────── Sound: everything is generated, no audio files ─────────────
 const Snd = { ctx: null, muted: false, lastChime: 0 };
-function startAudio() {
+function startAudio() { safe('starting the sound', startAudioNow); }
+function startAudioNow() {
   if (Snd.ctx) { Snd.ctx.resume(); return; }
   const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
   const ctx = Snd.ctx = new AC(), now = ctx.currentTime;
@@ -1620,7 +1629,7 @@ function startAudio() {
   // the rush of flying between the stars
   const fn = ctx.createBufferSource(); fn.buffer = nb; fn.loop = true; const ff = ctx.createBiquadFilter(); ff.type = 'bandpass'; ff.frequency.value = 110; ff.Q.value = 0.9;
   const fg = ctx.createGain(); fg.gain.value = 0; fn.connect(ff); ff.connect(fg); fg.connect(bus); fn.start(); Snd.fly = { g: fg, f: ff };
-  voxInit(ctx);
+  try { voxInit(ctx); } catch (e) { Snd.vox = null; fault(e, 'setting up the voices'); }
 }
 function chime(i) {            // each constellation has its own note
   const ctx = Snd.ctx; if (!ctx || ctx.state !== 'running' || ctx.currentTime - Snd.lastChime < 0.35) return;
@@ -1678,7 +1687,8 @@ function voxInit(ctx) {
     saws(v, v.g, [[1, 0.10, 0, 'sine'], [2, 0.05, 3, 'sine'], [3.02, 0.02, 0, 'triangle']]); v.o.forEach(([o, m]) => o.frequency.value = 118 * m); }
   V.tickAt = -1;
 }
-function voxOneShot(pos, build) { const ctx = Snd.ctx; if (!ctx || ctx.state !== 'running') return; const pan = ctx.createPanner(); pan.panningModel = 'HRTF'; pan.distanceModel = 'linear'; pan.rolloffFactor = 0;
+function voxOneShot(pos, build) { safe('a sound', () => voxOneShotNow(pos, build)); }
+function voxOneShotNow(pos, build) { const ctx = Snd.ctx; if (!ctx || ctx.state !== 'running' || !pos.every(Number.isFinite)) return; const pan = ctx.createPanner(); pan.panningModel = 'HRTF'; pan.distanceModel = 'linear'; pan.rolloffFactor = 0;
   if (pan.positionX) { pan.positionX.value = pos[0]; pan.positionY.value = pos[1]; pan.positionZ.value = pos[2]; } else pan.setPosition(pos[0], pos[1], pos[2]); pan.connect(Snd.bus); build(ctx, ctx.currentTime, pan); }
 function tickAt(pos, amt) {       // one sweep of a pulsar's beam
   voxOneShot(pos, (ctx, t, out) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'square'; o.frequency.setValueAtTime(1500, t); o.frequency.exponentialRampToValueAtTime(260, t + 0.05);
@@ -1687,8 +1697,9 @@ function blastAt(pos) {           // a supernova: a crack, then a long falling r
   voxOneShot(pos, (ctx, t, out) => { const n = ctx.createBufferSource(); n.buffer = Snd.noise; n.loop = true; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(5000, t); lp.frequency.exponentialRampToValueAtTime(70, t + 5);
     const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.42, t + 0.03); g.gain.exponentialRampToValueAtTime(0.06, t + 2.5); g.gain.exponentialRampToValueAtTime(0.0001, t + 9); n.connect(lp); lp.connect(g); g.connect(out); n.start(t); n.stop(t + 9.2);
     const o = ctx.createOscillator(), og = ctx.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(38, t + 4); og.gain.setValueAtTime(0, t); og.gain.linearRampToValueAtTime(0.3, t + 0.04); og.gain.exponentialRampToValueAtTime(0.0001, t + 6); o.connect(og); og.connect(out); o.start(t); o.stop(t + 6.2); }); }
-function updateVoices() {         // every frame: where your ears are, and what each voice should be doing
-  const ctx = Snd.ctx, V = Snd.vox; if (!ctx || !V || ctx.state !== 'running') return;
+function updateVoices() { try { updateVoicesNow(); } catch (e) { Snd.vox = null; fault(e, 'the voices'); } }      // (if the voices fail, they fall silent and everything else carries on)
+function updateVoicesNow() {      // every frame: where your ears are, and what each voice should be doing
+  const ctx = Snd.ctx, V = Snd.vox; if (!ctx || !V || !V.star || !V.cloud || !V.hole || !V.fans || ctx.state !== 'running') return;
   const t = ctx.currentTime, set = (prm, v, tc) => prm.setTargetAtTime(v, t, tc || 0.15), cl = (x, a, b) => Math.min(b, Math.max(a, x)), sm = (a, b, x) => { const u = cl((x - a) / (b - a), 0, 1); return u * u * (3 - 2 * u); };
   const place = (v, q) => { const pn = v.pan; if (pn.positionX) { set(pn.positionX, q[0], 0.05); set(pn.positionY, q[1], 0.05); set(pn.positionZ, q[2], 0.05); } else pn.setPosition(q[0], q[1], q[2]); };
   { const L = ctx.listener, h = S.head, f = (S.ear && S.ear.f) || [0, 0, -1], u = (S.ear && S.ear.u) || [0, 1, 0];
@@ -2672,7 +2683,7 @@ function update(dt, forward, stick, stickY, rays, fly) {
     S.fspeed += (target - S.fspeed) * Math.min(1, dt * (fly ? 4 : 2.5));
     if (fly) { S.fdir = unSky(A, fly.dir); if (S.groundT) toggleGround(); }
     if (S.fspeed > 0.001) { const lim = Math.max(MAXPC, plen()); S.pos = add3(S.pos, S.fdir, S.fspeed * dt / LY); const r = plen(); if (r > lim) S.pos = S.pos.map(x => x * lim / r); } }      // free flight ends 1,500 light-years out; from a far destination you can roam, but not further away
-  updateRide(dt, stickY || 0); updateLife(dt, stickY || 0); updateSand(dt);
+  safe('the scale ride', () => updateRide(dt, stickY || 0)); safe('the life of a star', () => { try { updateLife(dt, stickY || 0); } catch (e) { LIFE.on = false; throw e; } }); safe('the sandbox', () => { try { updateSand(dt); } catch (e) { SAND.on = false; throw e; } });
   { const t = AR && !BH.on && !inside() ? 1 - S.ground : 0; ROOM.a += (t - ROOM.a) * Math.min(1, dt * 3); if (Math.abs(t - ROOM.a) < 0.002) ROOM.a = t; }
   { const r = plen(), k = r > 1 ? Math.log(1 + r / FARL) / r : 1 / FARL, q = S.pos.map(x => x * k);      // logarithmic, so a trip of 60 million light-years does not become a blur
     const tr = dt > 0 ? add3(q, S.farQ, -1).map(x => x / dt * 0.1) : [0, 0, 0], tl = Math.hypot(tr[0], tr[1], tr[2]);
@@ -2895,8 +2906,8 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
         sun(add3(mid, o, -sep * r2 / (r1 + r2)), r1, PICK[i][5], 0.05, pickAbs[i]); sun(add3(mid, o, sep * r1 / (r1 + r2)), r2, dbl[0], 0.08, null); }
       gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
       for (const [pos, q, r, c, amt] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, amt); } }
-  if (LIFE.on) drawLife(PVF, eye || [0, 0, 0]);
-  if (SAND.on) drawSand(PVF, eye || [0, 0, 0]);
+  if (LIFE.on) safe('drawing the life of a star', () => drawLife(PVF, eye || [0, 0, 0]));
+  if (SAND.on) safe('drawing the sandbox', () => drawSand(PVF, eye || [0, 0, 0]));
   if (OUT && OUT.tex) { const keep = Object.assign({}, G); Object.assign(G, OUT); drawRoom(PVF, eye); Object.assign(G, keep); }   // the one that is leaving
   drawRoom(PVF, eye);
   if (tagCount) { gl.enable(gl.DEPTH_TEST); gl.useProgram(tagProg.p); gl.uniformMatrix4fv(tagProg.u.uPV, false, PVF); gl.uniform1i(tagProg.u.uTex, 0); gl.uniform1f(tagProg.u.uFloor, 0); gl.uniform3f(tagProg.u.uCol, .72, .95, 1);
@@ -2912,7 +2923,8 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
 // ───────────── Desktop / flat-screen loop ─────────────
 let xrSession = null, last = performance.now(), keyStick = 0, keyStickY = 0, flyKey = 0;
 let flatRaf = 0;
-function flatFrame(now) {
+function flatFrame(now) { try { flatFrameNow(now); } catch (e) { fault(e, 'drawing the page'); } }
+function flatFrameNow(now) {
   flatRaf = 0; if (xrSession) return;
   flatRaf = requestAnimationFrame(flatFrame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -3011,8 +3023,8 @@ const enter = async (mode, btn) => {
       if (tapSun && tapSun.src === e.inputSource) { const quick = S.time - tapSun.t0 < 0.3; tapSun = null; if (quick && G.i === SYS && !G.anim) zoomBody(SUN, head); } const t0 = pending.get(e.inputSource); pending.delete(e.inputSource); if (t0 !== undefined && S.time - t0 < 0.35) cycleMode(); });
     session.addEventListener('squeeze', toggleGround);
     session.addEventListener('end', () => { xrSession = null; if (AR) { AR = false; ROOM.a = 0; ROOM.mode = ''; lifeOff(); S.groundT = 1; } clearRoom(); ctl.clear(); beamCount = 0; pending.clear(); S.dustN = DUST; S.mirN = MIRROR_DUST; last = performance.now(); cancelAnimationFrame(flatRaf); flatRaf = requestAnimationFrame(flatFrame); });
-    const onFrame = (t, frame) => {
-      session.requestAnimationFrame(onFrame);
+    const onFrame = (t, frame) => { session.requestAnimationFrame(onFrame); try { onFrameNow(t, frame); } catch (e) { fault(e, 'drawing in the headset'); } };
+    const onFrameNow = (t, frame) => {
       const pose = frame.getViewerPose(space); if (!pose) return;
       const dt = prev ? Math.min(0.1, (t - prev) / 1000) : 0; prev = t;
       pace += (dt - pace) * 0.05;               // frames arriving late for seconds on end: draw less dust
