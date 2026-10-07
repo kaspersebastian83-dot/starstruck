@@ -33,7 +33,7 @@
 <div id="ui">
   <h1>Starstruck</h1>
   <p id="where"></p>
-  <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0). Build 2026-10-07 10:13.</p>
+  <p style="font-size:11px;margin-top:6px;color:#5f6f90">Constellation figures by Johan Meuris, from Stellarium (Free Art License). Planet maps by Solar System Scope (CC BY 4.0). Build 2026-10-07 11:02.</p>
   <div id="row">
     <button id="vr" disabled>Checking for VR…</button>
     <button id="ar" style="display:none">Bring the sky into your room</button>
@@ -44,7 +44,7 @@
 <script>
 'use strict';
 // ───────────── If something goes wrong, say so where it can be seen ─────────────
-const BUILD = '2026-10-07 10:13'; let FAULT = '';
+const BUILD = '2026-10-07 11:02'; let FAULT = '';
 function fault(e, where) { try { console.error(where, e); if (FAULT) return; FAULT = (where ? where + ': ' : '') + (e && e.name ? e.name + ' · ' : '') + (e && e.message ? e.message : String(e));
   const el = document.getElementById('xrerr'); if (el) { el.textContent = 'Something went wrong (build ' + BUILD + ') in ' + FAULT; el.style.display = ''; } } catch (x) {} }
 addEventListener('error', e => fault(e.error || e.message, 'the page' + (e.lineno ? ' (line ' + e.lineno + ')' : '')));
@@ -145,7 +145,7 @@ function worldFrame(w, ms) {     // the body's own axes among the stars (X: wher
 function skyMatrix(ms) {
   if (RIDE_SKY) return new Float32Array(RIDE_SKY);
   if (WORLD === 4) { const f = orbitFrame(ms); return new Float32Array([f.right[0], f.up[0], -f.fwd[0], f.right[1], f.up[1], -f.fwd[1], f.right[2], f.up[2], -f.fwd[2]]); }
-  if (WORLDS[WORLD].kind === 5) { const f = ringFrame(ms); return new Float32Array([f.right[0], f.up[0], -f.fwd[0], f.right[1], f.up[1], -f.fwd[1], f.right[2], f.up[2], -f.fwd[2]]); }
+  if (WORLDS[WORLD].kind === 5) { const g = ringFrame(ms), a = ringTilt(), c = Math.cos(a), n = Math.sin(a), f = { right: g.right, up: g.up.map((x, k) => x * c + g.fwd[k] * n), fwd: g.fwd.map((x, k) => x * c - g.up[k] * n) }; return new Float32Array([f.right[0], f.up[0], -f.fwd[0], f.right[1], f.up[1], -f.fwd[1], f.right[2], f.up[2], -f.fwd[2]]); }
   if (WORLD) { const f = worldFrame(WORLDS[WORLD], ms); return new Float32Array([f.east[0], f.up[0], -f.north[0], f.east[1], f.up[1], -f.north[1], f.east[2], f.up[2], -f.north[2]]); }
   const jd = ms / 86400000 + 2440587.5;
   const L = ((280.46061837 + 360.98564736629 * (jd - 2451545.0) + LON) % 360) * D;
@@ -196,6 +196,14 @@ float modelR(float pc){ return clamp(2.5*pow(pc, .42), .4, 90.); }
 `;
 const modelR = pc => Math.max(0.4, Math.min(90, 2.5 * Math.pow(pc, 0.42)));
 const PARALLAX = 0.35;           // how much of your own head movement the star model ignores (0 = stars glued to your head, 1 = fixed in the room)
+const RINGD = `
+  float ringD(float r){                                               // how much ice there is at each distance from Saturn's centre (thousands of km): the real bands and gaps
+    float d = .13*smoothstep(74.5, 75.5, r)*smoothstep(92.1, 91.9, r)*(.75+.35*sin(r*2.1)+.2*sin(r*5.3+1.));                        // the thin C ring
+    d += (.7+.3*smoothstep(98., 104., r))*smoothstep(91.9, 92.3, r)*smoothstep(117.6, 117.5, r);                                    // the B ring, the densest
+    d += .07*smoothstep(117.5, 117.7, r)*smoothstep(122.2, 122., r);                                                                // the Cassini Division
+    d += .55*smoothstep(122., 122.3, r)*smoothstep(136.8, 136.7, r)*(1.-smoothstep(133.3, 133.42, r)*smoothstep(133.8, 133.68, r));   // the A ring, with the Encke Gap
+    return d + .12*smoothstep(.15, 0., abs(r-140.2)); }                                                                             // the narrow F ring
+`;
 const HORIZON = `
 float hor(vec3 w){ float az = atan(w.x, -w.z);
   return 0.020 + 0.008*sin(az*5.+1.3) + 0.005*sin(az*13.+.7) + 0.003*sin(az*31.+2.1); }
@@ -275,7 +283,7 @@ const bg = program(`
     vec3 c = mw(w)*(1.-.85*exp(-up*7.)) + vec3(.030,.046,.085)*exp(-up*9.) + vec3(.006,.009,.018);
     if (uAurora > .001) c += aurora(w); if (uNova.w > .001) c += nova(w); if (uFire.w > .001) c += fire(w); c += uFlash*vec3(.07,.09,.12)*(1.+2.*exp(-up*4.));
     return mix(vec3(.004,.005,.009), c, smoothstep(h-.003, h+.003, w.y)); }
-  uniform float uRingH, uRingN; uniform vec4 uShad;      // your height above Saturn's rings (km) and which of its poles is up; where something tall stands on the ground and throws a shadow
+  uniform float uRingH, uRingR, uRingN; uniform vec2 uRingT; uniform vec4 uShad;      // your height above Saturn's rings (km) and which of its poles is up; where something tall stands on the ground and throws a shadow
   vec3 lake(vec3 w){ vec2 p = w.xz/max(-w.y, .03);                      // still water: a mirror with a slow ripple
     vec2 rip = vec2(sin(p.x*3.1+uTime*.7)+sin(p.y*4.3-uTime*.5+p.x*1.7), sin(p.y*3.7+uTime*.6)+sin(p.x*5.1+uTime*.4-p.y*1.3))
                *.004*min(1., 3./(1.+length(p)*.3));
@@ -333,36 +341,37 @@ const bg = program(`
       c = g*lit + vec3(.28,.5,1.)*rim*.7*lit + vec3(.004,.006,.012); }
     else if (b < 0.) c += vec3(.25,.5,1.)*exp(-max(miss, 0.)/18.)*.9*smoothstep(-.3, .2, uSun.y+.25+dot(w, uSun)*.4);
     return c; }
-  float ringD(float r){                                               // how much ice there is at each distance from Saturn's centre (thousands of km): the real bands and gaps
-    float d = .13*smoothstep(74.5, 75.5, r)*smoothstep(92.1, 91.9, r)*(.6+.8*n2(vec2(r*.9, 3.)));                                  // the thin C ring
-    d += (.7+.3*smoothstep(98., 104., r))*smoothstep(91.9, 92.3, r)*smoothstep(117.6, 117.5, r);                                    // the B ring, the densest
-    d += .07*smoothstep(117.5, 117.7, r)*smoothstep(122.2, 122., r);                                                                // the Cassini Division
-    d += .55*smoothstep(122., 122.3, r)*smoothstep(136.8, 136.7, r)*(1.-smoothstep(133.3, 133.42, r)*smoothstep(133.8, 133.68, r));   // the A ring, with the Encke Gap
-    return d + .12*smoothstep(.15, 0., abs(r-140.2)); }                                                                             // the narrow F ring
-  vec3 rings(vec3 w){                                                 // from just above Saturn's rings: the planet (flattened by a tenth), the sheet of ice, the planet's shadow across it
-    const float RS = 60.268, R0 = 112.; const vec3 K = vec3(1., 1.108, 1.); float H = uRingH*.001, a = acos(clamp(dot(w, uSun), -1., 1.)); vec3 C = vec3(0., -H, -R0);
-    vec3 sky = mw(w) + vec3(1.,.98,.95)*(30.*smoothstep(uSunR*1.2, uSunR*.8, a) + .9*exp(-a/(uSunR*5.+.004)) + .05*exp(-a/.09));
+` + RINGD + `  vec3 rings(vec3 wr){                                                 // Saturn and its rings from anywhere near them, above or below: the planet (flattened by a tenth), the sheet of ice with its shadows, and what shows through it
+    vec3 w = vec3(wr.x, wr.y*uRingT.x + wr.z*uRingT.y, -wr.y*uRingT.y + wr.z*uRingT.x), sn = vec3(uSun.x, uSun.y*uRingT.x + uSun.z*uRingT.y, -uSun.y*uRingT.y + uSun.z*uRingT.x);   // from far out the deck is tipped towards the planet: turn everything back into the rings' own axes
+    const float RS = 60.268, H0 = .000005; const vec3 K = vec3(1., 1.108, 1.); float H = uRingH*.001, R0 = uRingR, a = acos(clamp(dot(w, sn), -1., 1.)), mu0 = max(abs(sn.y), .03); vec3 C = vec3(0., -H, -R0);
+    vec3 sky = mw(wr) + vec3(1.,.98,.95)*(30.*smoothstep(uSunR*1.2, uSunR*.8, a) + .9*exp(-a/(uSunR*5.+.004)) + .05*exp(-a/.09));
     vec3 wd = w*K, oc = -C*K; float A = dot(wd, wd), B = dot(oc, wd), disc = B*B - A*(dot(oc, oc)-RS*RS), ts = 1e9;
-    if (disc > 0. && B < 0.) { ts = (-B-sqrt(disc))/A; vec3 P = w*ts - C, n = normalize(P*K*K); float mu = max(dot(n, -w), 0.), lit = smoothstep(-.06, .3, dot(n, uSun));
+    if (disc > 0. && B < 0.) { ts = (-B-sqrt(disc))/A; vec3 P = w*ts - C, n = normalize(P*K*K); float mu = max(dot(n, -w), 0.), lit = smoothstep(-.06, .3, dot(n, sn));
       vec3 tex = texture(uEarth, vec2(.31, .5 - asin(clamp(normalize(P).y*uRingN, -1., 1.))/3.14159265)).rgb;
-      if (P.y < 0. && uSun.y > 1e-3) { vec3 x = P + uSun*(-P.y/uSun.y); lit *= 1.-.8*min(ringD(length(x.xz)), 1.); }                // the rings' own shadow on the planet
-      sky = tex*(.03 + lit)*(.5+.5*sqrt(mu)) + vec3(.32,.28,.2)*pow(1.-mu, 3.)*lit; }
-    if (w.y >= 0.) return sky;
-    float t = H/(-w.y); if (t > ts) return sky;
+      if (P.y*sn.y < 0.) { vec3 x = P + sn*(-P.y/sn.y); lit *= .08+.92*exp(-ringD(length(x.xz))*1.6/mu0); }                    // the rings' own shadow on the planet
+      sky = tex*(.02 + lit)*(.5+.5*sqrt(mu)) + vec3(.32,.28,.2)*pow(1.-mu, 3.)*lit + tex*vec3(1.,.93,.8)*.05*(1.-lit)*smoothstep(-.15, .5, n.y*sign(sn.y)); }      // (the sunlit rings shine on the night side of the planet)
+    float sg = w.y > 0. ? 1. : -1., frac = clamp((H0 - H*sg)/(2.*H0), 0., 1.); if (frac <= 0.) return sky;      // the sheet is 10 m thick: how much of it lies ahead along this line of sight (all of it from outside, part of it from within)
+    float t = max((sg*H0 - H)/(abs(w.y) > 1e-7 ? w.y : sg*1e-7), 0.); if (t > ts) return sky;
     vec2 pk = w.xz*t; vec3 Pr = vec3(pk.x, 0., pk.y + R0); float r = length(Pr.xz), dens = ringD(r); if (dens < .002) return sky;
-    float fp = t*.0012/max(-w.y, .04), dr = (dot(pk, pk) + 2.*pk.y*R0)/(r + R0);      // fp: how much ring one pixel covers (finer ringlets than that are left out); dr: how far out from where you are
+    float mu = max(abs(w.y), .03), fp = t*.0012/max(abs(w.y), .04), dr = r - 112.; if (abs(dr) < 3.) dr = (dot(pk, pk) + 2.*pk.y*R0 + R0*R0 - 12544.)/(r + 112.);   // fp: how much ring one pixel covers (finer ringlets than that are left out)
     float gro = mix(1., .45+1.1*n2(vec2(dr*1.3, 1.)), clamp(1.-fp*2.6, 0., 1.)*.7)*mix(1., .6+.8*n2(vec2(dr*11., 2.)), clamp(1.-fp*22., 0., 1.)*.6)*mix(1., .65+.7*n2(vec2(dr*97., 5.)), clamp(1.-fp*194., 0., 1.)*.6)
       *mix(1., .7+.6*n2(vec2(dr*830., 7.)), clamp(1.-fp*1660., 0., 1.)*.5)*mix(1., .75+.5*n2(vec2(dr*7100., 9.)), clamp(1.-fp*14200., 0., 1.)*.4);                         // ringlets within ringlets, down to a hundred metres
-    vec3 sd = uSun*K, pc = Pr*K; float B2 = dot(pc, sd), e2 = B2*B2 - dot(sd, sd)*(dot(pc, pc)-RS*RS), sun = (1.-(B2 < 0. ? smoothstep(0., 60., e2) : 0.))*smoothstep(0., .03, uSun.y);
-    float al = 1.-exp(-dens*gro*2.4/max(-w.y, .05)); vec3 ice = mix(vec3(.5,.46,.42), vec3(.96,.9,.8), smoothstep(.08, .6, dens)), far = ice*(.03 + .6*sun*clamp(.4+.6*gro, 0., 1.4)), col = mix(sky, far, al);
-    float tm = uRingH*1000./(-w.y), fm = tm*.0012/max(-w.y, .05);     // the same in metres: near enough, and the sheet comes apart into single lumps of ice
-    if (fm < 11.) { vec2 pm = w.xz*tm + vec2(uTime*.12, uTime*.05); vec3 near = mix(sky*.4, far*.8, al*al);
+    vec3 sd = sn*K, pc = Pr*K; float B2 = dot(pc, sd), e2 = B2*B2 - dot(sd, sd)*(dot(pc, pc)-RS*RS), sun = 1.-(B2 > 0. ? 0. : smoothstep(0., 60., e2));              // Saturn's shadow across the rings
+    float tau = dens*gro*1.6, al = (1.-exp(-tau*frac/mu))*mix(1., smoothstep(40., 110., t*1e6*length(w.xz)), 1.-smoothstep(10., 40., abs(uRingH)*1000.)), x = tau/mu0,      /* (when you are in among the ice, the lumps near you are real shapes: the haze is only what lies beyond them) */
+      same = clamp(.5 + .5*H*sign(sn.y)/H0, 0., 1.);
+    vec3 ice = mix(mix(vec3(.6,.5,.4), vec3(.97,.9,.78), smoothstep(.08, .6, dens)), vec3(.86,.85,.84), smoothstep(119., 123., r)*.7);                              // tan where it is thin, cream in the B ring, greyer in the A ring
+    vec3 far = mix(ice*vec3(.92,.95,1.)*(.012 + .55*sun*x*exp(-x)*2.7), ice*(.03 + .62*sun*clamp(.4+.6*gro, 0., 1.4)), same);                                       // from the dark side you see only the light that comes through: most where the ice is thin
+    far += ice*vec3(1.,.95,.85)*sun*.9*exp(-a*3.5)*(1.-smoothstep(10., 40., abs(uRingH)*1000.)) + ice*vec3(1.,.93,.8)*.035*(1.-same) + vec3(1.,.95,.85)*sun*al*.5*exp(-a*7.)*(1.-same);                                                                                                          // and a glow round the Sun, shining through
+    vec3 col = mix(sky, far, al);
+    float tm = abs(uRingH)*1000./abs(w.y), fm = tm*.0012/max(abs(w.y), .05);     // the same in metres: near enough, and the sheet comes apart into single lumps of ice
+    if (fm < 11.) { vec2 pm = w.xz*tm; vec3 near = mix(sky*(1.-.45*al), far*.8, al*al); float out60 = smoothstep(45., 75., length(pm))*smoothstep(12., 30., abs(uRingH)*1000.);                                     // (the nearest ones are real shapes, drawn separately)
       for (int i = 0; i < 3; i++) { float c = i == 0 ? 24. : i == 1 ? 6. : 1.6, an = float(i)*1.1+.4, ca = cos(an), sa = sin(an); vec2 g = vec2(ca*pm.x - sa*pm.y, sa*pm.x + ca*pm.y)/c + float(i)*17.3, id = floor(g);
-        float rad = i == 0 ? .07+.16*hs(id+3.1) : .14+.3*hs(id+3.1), wgt = (1.-smoothstep(.1*c, .34*c, fm))*step(hs(id+1.7), (i == 0 ? .3 : .75)*(dens*1.2+.15));
-        vec2 q = fract(g)-.5-(1.-2.*rad)*.9*(vec2(hs(id), hs(id+7.3))-.5); float dd = length(q)/rad;
-        if (dd < 1. && wgt > 0.) { vec2 qq = vec2(ca*q.x + sa*q.y, -sa*q.x + ca*q.y)/rad; vec3 nn = normalize(vec3(qq.x, sqrt(1.-dd*dd), qq.y));
-          near = mix(near, ice*((.5+.5*dot(nn, uSun))*sun*.95 + .1)*(.75+.5*hs(id+9.)), wgt*smoothstep(1., .85, dd)); } }
-      col = mix(col, near, 1.-smoothstep(3.5, 11., fm)); }
+        float rad = i == 0 ? .07+.16*hs(id+3.1) : .12+.22*hs(id+3.1), wgt = out60*(1.-smoothstep(.1*c, .34*c, fm))*step(hs(id+1.7), (i == 0 ? .3 : .75)*(dens*1.2+.15));
+        vec2 q = fract(g)-.5-(1.-2.*rad)*.9*(vec2(hs(id), hs(id+7.3))-.5), qq = vec2(ca*q.x + sa*q.y, -sa*q.x + ca*q.y)/rad, vh = normalize(w.xz+vec2(1e-6));
+        float lat = dot(qq, vec2(-vh.y, vh.x)), up = dot(qq, vh)*max(abs(w.y), .42)*sign(H), dd = length(vec2(lat, up));      // (each lump is a ball, not a patch on the sheet: it is drawn round from wherever you look)
+        if (dd < 1. && wgt > 0.) { vec3 r3 = vec3(-vh.y, 0., vh.x), nn = normalize(r3*lat + cross(-w, r3)*up - w*sqrt(1.-dd*dd));
+          near = mix(near, ice*((.5+.5*dot(nn, sn))*sun*.95 + .08)*(.75+.5*hs(id+9.)), wgt*smoothstep(1., .85, dd)); } }
+      col = mix(col, near, (1.-smoothstep(3.5, 11., fm))*smoothstep(12., 30., abs(uRingH)*1000.)); }
     return col; }
   void main(){
     vec3 w = normalize(vDir);
@@ -376,7 +385,7 @@ const bgVao = gl.createVertexArray();
 const stars = program(`
   in vec3 aDir; in vec2 aMB; in vec3 aVel;                       // aDir: position in parsecs (Sun at the origin); aMB: absolute magnitude, colour index
   uniform mat4 uPV; uniform mat3 uSky; uniform vec3 uCam, uEye; uniform float uPx, uTime, uGround, uReveal, uMirror, uAir, uYears, uBHg, uDip; uniform vec4 uBH, uOcc; uniform sampler2D uBHI;
-  out vec3 vCol; out float vSpike;` + HORIZON + DEPTH + `
+  out vec3 vCol; out float vSpike;` + HORIZON + DEPTH + RINGD + `
   void main(){
     vec3 rel = aDir+aVel*uYears-uCam; float dist = max(length(rel), 1e-4);      // (deep time: every star has moved on along its own path)
     vec3 d = uSky*(rel/dist); float mag = max(aMB.x + 2.1714724*log(dist/10.), -5.), bv = aMB.y;
@@ -384,7 +393,8 @@ const stars = program(`
     float rnd = fract(sin(float(gl_VertexID)*12.9898)*43758.5453);
     float up = d.y-(uDip < -.01 ? uDip : hor(d));
     float vis = mix(1., smoothstep(0., .03, up)*(1.-.75*uAir*exp(-max(up,0.)*6.)), uGround);
-    if (uOcc.w > .5) { vec3 kk = vec3(1., 1.108, 1.), wd = d*kk, oc = vec3(0., uOcc.x, uOcc.y)*kk; float A = dot(wd, wd), B = dot(oc, wd); if (B < 0. && B*B - A*(dot(oc, oc)-3632.23) > 0.) vis = 0.; }   // over Saturn's rings: no stars in front of the planet
+    if (uOcc.w > .5) { float ct = cos(uOcc.z), st = sin(uOcc.z); vec3 e = vec3(d.x, d.y*ct + d.z*st, -d.y*st + d.z*ct), kk = vec3(1., 1.108, 1.), wd = e*kk, oc = vec3(0., uOcc.x, uOcc.y)*kk; float A = dot(wd, wd), B = dot(oc, wd), tt = abs(e.y) > 1e-5 ? -uOcc.x/e.y : -1.;   // near Saturn: no stars in front of the planet, and fewer behind the ice
+      if (B < 0. && B*B - A*(dot(oc, oc)-3632.23) > 0.) vis = 0.; else if (tt > 0.) vis *= exp(-ringD(length(vec2(e.x*tt, e.z*tt + uOcc.y)))*1.6/max(abs(e.y), .03)); }
     float tw = 1.+sin(uTime*(2.5+6.*rnd)+rnd*50.)*(.10+.35*uGround*exp(-max(up,0.)*4.)+.25*uMirror)*mix(.12, 1., uAir);   // stars only twinkle where there is air
     if (uMirror > .5) {                                   // the same star, seen in the lake
       vis *= uGround*mix(.40, .85, pow(1.-clamp(d.y,0.,1.), 3.));
@@ -1069,7 +1079,8 @@ const solid = program(`
                mix(mix(h3(i+vec3(0,0,1)), h3(i+vec3(1,0,1)), f.x), mix(h3(i+vec3(0,1,1)), h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
   void main(){ vec3 n = normalize(vN), e = normalize(uEye-vW); if (dot(n, e) < 0.) n = -n;
     vec3 c = vC, g = vL*54.5; float shine = .25;                         // g: the place on the station in metres
-    if (uRock > .5) { float m = .5*vn(vL*9.)+.3*vn(vL*23.)+.2*vn(vL*61.); c *= .55+.9*m; c = mix(c, vec3(.75,.8,.85), smoothstep(.72, .8, vn(vL*5.+7.))*.5); shine = 0.; }   // dusty rock with a few icy patches
+    if (uRock > 1.5) { float m = .5*vn(vW*1.3)+.3*vn(vW*4.1)+.2*vn(vW*11.); c *= .8+.32*m; c = mix(c, vec3(.82,.92,1.), smoothstep(.55, .8, vn(vW*.7+3.))*.3); shine = 1.1*m; }   // ice: pale, a little glassy
+    else if (uRock > .5) { float m = .5*vn(vL*9.)+.3*vn(vL*23.)+.2*vn(vL*61.); c *= .55+.9*m; c = mix(c, vec3(.75,.8,.85), smoothstep(.72, .8, vn(vL*5.+7.))*.5); shine = 0.; }   // dusty rock with a few icy patches
     else if (vM == 1. || vM == 2.) { vec2 q = g.xy, f = min(fract(q), 1.-fract(q)), w = fwidth(q)*1.2+.03;                 // solar cells: a fine grid; dark blue towards the Sun, gold from behind
       c *= .55+.45*smoothstep(0., w.x, f.x)*smoothstep(0., w.y, f.y); shine = vM == 1. ? 1.1 : .45; }
     else if (vM == 3.) { float s = (g.y+g.x+g.z)/1.5, t = (g.y-g.x-g.z)/1.5, a = min(abs(fract(s)-.5), abs(fract(t)-.5)); c *= mix(1.15, .42, smoothstep(.05, .17, a)); }   // girders
@@ -1621,7 +1632,7 @@ let infoKey = '', infoOn = false;
 function drawInfo() {
   if (G.i === MOON) FACTS[MOON][2][4][1] = moonPhase();
   const ip = partsOf(G.i) && G.info >= 0 ? G.info : G.i < 0 && inside() ? ISSP.findIndex(P => P.id === ROOMS[IN.path ? IN.path.to : IN.at].id) : -1;
-  const key = ip >= 0 && G.i < 0 ? 'in' + ip : G.i >= 0 ? 'g' + G.i + (G.i === MOON ? FACTS[MOON][2][4][1] : '') + 'p' + ip : S.at >= 0 ? 's' + S.at : apolloNow() ? 'apollo' + apolloPhase() + Math.floor(S.sim / 86400000) + (S.sunL[1] > 0 ? Math.round(Math.asin(S.sunL[1]) / D) : 'n') : ringsNow() ? 'rings' + Math.round(RINGS.s * 25) : ''; infoOn = key !== ''; if (key === infoKey || !infoOn) return; infoKey = key;
+  const key = ip >= 0 && G.i < 0 ? 'in' + ip : G.i >= 0 ? 'g' + G.i + (G.i === MOON ? FACTS[MOON][2][4][1] : '') + 'p' + ip : S.at >= 0 ? 's' + S.at : apolloNow() ? 'apollo' + apolloPhase() + Math.floor(S.sim / 86400000) + (S.sunL[1] > 0 ? Math.round(Math.asin(S.sunL[1]) / D) : 'n') : ringsNow() ? 'rings' + Math.round(RINGS.p * 25) : ''; infoOn = key !== ''; if (key === infoKey || !infoOn) return; infoKey = key;
   const [title, sub, rows, note] = ip >= 0 ? (partsOf(G.i) || ISSP)[ip].facts : G.i >= 0 ? FACTS[G.i] : S.at >= 0 ? starFacts(S.at) : apolloNow() ? apolloFacts() : ringFacts(), x = infoCx, T = 'rgba(70,215,230,', A = '#ffa64a'; sheetBase(x, 896, 560);
   x.fillStyle = '#e6f2ff'; x.font = '300 46px ' + FONT; spc(x, '0.2em'); x.fillText(title, 44, 70);
   x.fillStyle = A; x.font = '500 20px ' + FONT; spc(x, '0.12em'); x.fillText(sub.toUpperCase(), 46, 122);
@@ -1641,7 +1652,7 @@ const TAGS = ['MERCURY', 'VENUS', 'EARTH', 'MARS', 'JUPITER', 'SATURN', 'URANUS'
   'FIREBALL', 'METEOR SHOWER', 'AURORA', 'SUPERNOVA', 'look north', 'look north-east', 'look east', 'look south-east', 'look south', 'look south-west', 'look west', 'look north-west', 'look overhead',
   'a simulation: this has not happened', 'MISSION COMPLETE',
   'MOON', 'PHOBOS', 'DEIMOS', 'IO', 'EUROPA', 'GANYMEDE', 'CALLISTO', 'RHEA', 'TITAN', 'TITANIA', 'OBERON', 'TRITON', 'COMET', 'ISS', 'SPACE STATION PASSING', 'tap: look at it alone   ·   hold: move the station', ...ISSP.map(P => P.tag), ...VGRP.map(P => P.tag), 'VOYAGER 2', 'THE SUN', 'EARTH   ·   THE PALE BLUE DOT', 'at its real size', 'tap: look at it alone   ·   hold: move the probe',
-  'HIDDEN THING FOUND', 'TRANQUILITY BASE   ·   1969', 'SPUTNIK 1   ·   1957, passing once more', 'ECHO AFTER 2.5 SECONDS   ·   384,400 km AND BACK', 'JAMES WEBB TELESCOPE', 'NEW HORIZONS', 'PIONEER 10', 'PIONEER 11', 'STARMAN, IN A RED CAR', '6EQUJ5', 'THE WOW! SIGNAL   ·   15 AUGUST 1977', 'RUSSELL\'S TEAPOT', 'nobody can prove it is not there', 'DON\'T PANIC', '42 light-years from home', 'HAPPY BIRTHDAY', 'NOW PLAYING   ·   16 2/3 turns a minute',
+  'HIDDEN THING FOUND', 'MIMAS', 'ENCELADUS', 'TETHYS', 'DIONE', 'TRANQUILITY BASE   ·   1969', 'SPUTNIK 1   ·   1957, passing once more', 'ECHO AFTER 2.5 SECONDS   ·   384,400 km AND BACK', 'JAMES WEBB TELESCOPE', 'NEW HORIZONS', 'PIONEER 10', 'PIONEER 11', 'STARMAN, IN A RED CAR', '6EQUJ5', 'THE WOW! SIGNAL   ·   15 AUGUST 1977', 'RUSSELL\'S TEAPOT', 'nobody can prove it is not there', 'DON\'T PANIC', '42 light-years from home', 'HAPPY BIRTHDAY', 'NOW PLAYING   ·   16 2/3 turns a minute',
   'VOYAGER 1', 'KUIPER BELT', 'OORT CLOUD', 'ALPHA CENTAURI', 'SIRIUS', 'VEGA', 'ARCTURUS', 'YOU ARE HERE', 'MILKY WAY', 'ANDROMEDA', 'TRIANGULUM', 'MAGELLANIC CLOUDS', 'VIRGO CLUSTER', 'FORNAX CLUSTER', 'GREAT ATTRACTOR', 'PERSEUS CLUSTER', 'COMA CLUSTER', 'SHAPLEY SUPERCLUSTER',
   'ORBIT OF MERCURY', 'ORBIT OF VENUS', 'ORBIT OF THE EARTH', 'ORBIT OF MARS', 'ORBIT OF JUPITER', 'THE SUN TODAY, SAME SCALE', 'THE EARTH, SAME SCALE', 'hold: a new world at your hand   ·   let go to throw it'], tagW = [];
 const H_PRESS = 10, H_TRAVEL = 11, H_BRING = 12, H_GRAB = 13, H_ZOOM = 14, H_SUN = 15, H_EARTH = 16;
@@ -1689,6 +1700,8 @@ function updateTags(hints) {      // hints: [{ p: where, k: which tag, h: text h
     if (S.time < LASER.until) list.push({ p: add3(add3(S.head, LASER.d, 30), [0, -1.4, 0]), k: T('ECHO AFTER 2.5 SECONDS   ·   384,400 km AND BACK'), h: 0.45 });
     if (S.time < WOW.until) { const d = applySky(S.sky, WOW.dir); list.push({ p: add3(add3(S.head, d, 30), [0, 1.3, 0]), k: T('6EQUJ5'), h: 0.9 }, { p: add3(add3(S.head, d, 30), [0, 0.5, 0]), k: T('THE WOW! SIGNAL   ·   15 AUGUST 1977'), h: 0.4 }); } }
   if (VOY.on) voyTags(list, near);
+  if (ringsNow()) { for (const [name, dir] of ringMoons()) if (near(dir)) list.push({ p: add3(add3(S.head, dir, 30), [0, -0.7, 0]), k: TAGS.indexOf(name), h: 0.42 });      // the moons, and one more dot: home
+    const e = applySky(S.sky, S.pdirs[2]); if (near(e) && dot(e, S.fwd) > 0.93) list.push({ p: add3(add3(S.head, e, 30), [0, -0.75, 0]), k: TAGS.indexOf('EARTH   ·   THE PALE BLUE DOT'), h: 0.42 }); }
   if (LIFE.on && LIFE.v) for (const g of LIFE.v.rings) if (g.tag) list.push({ p: g.tp, k: TAGS.indexOf(g.tag), h: 0.2 * Math.max(LIFE.k, 0.4) });      // what the model star is measured against
   if (S.time < missionUntil) list.push({ p: [0, S.floorY + 1.235, -0.86], k: TAGS.indexOf('MISSION COMPLETE'), h: 0.04 });
   if (MOONS[G.i] && !G.anim && G.tex) { const h = Math.max(0.011, 0.085 * G.rad); for (const m of moonsOf(G)) list.push({ p: [m.p[0], m.p[1] + m.r + h * 0.9, m.p[2]], k: TAGS.indexOf(m.name), h }); }
@@ -2462,17 +2475,89 @@ function apolloFacts() { const ph = apolloPhase(), d = new Date(S.sim), when = d
     : ['TRANQUILITY BASE', 'What Apollo 11 left behind   ·   ' + when, [['Still here', 'the lower half of the lander'], ['The flag', 'blown over at take-off, said Aldrin'], ['The mirror', 'still sends laser light back to Earth'], ['Footprints', 'no wind, no rain: they remain'], ['Right now', S.sunL[1] > 0 ? 'day: the Sun is ' + Math.round(Math.asin(S.sunL[1]) / D) + '° up' : 'night, lit only by the Earth overhead']], PLAQUE]; }
 
 // Saturn's rings from just above them. The Sun stands where it really does for Saturn today; you hover 112,000 km from Saturn's centre, over the outer B ring.
-const RINGS = { s: 6.3, lo: 1.5, hi: 6.5 };      // s: your height above the ring plane, as log10 of metres
+const RINGS = { p: 8.18, lo: -8.18, hi: 8.18 };      // p: where you are on the way down. Above 0 you are over the sunlit face, below 0 under the dark one; the height is 10^|p| - 1 metres
+const ringH = () => Math.sign(RINGS.p) * (Math.pow(10, Math.abs(RINGS.p)) - 1), ringFar = () => { const t = Math.min(1, Math.max(0, (Math.abs(RINGS.p) - 6.5) / 1.68)); return t * t * (3 - 2 * t); };
+const ringRho = () => 112 + 268 * ringFar();      // thousands of km from Saturn's axis: from far out you also stand further back, so that the whole planet is in view
+const ringTilt = () => { const e = Math.atan2(Math.abs(ringH()) / 1e6, ringRho()); return RINGS.p > 0 ? ringFar() * (e + 0.12) : -ringFar() * Math.max(0, e - 0.3); };      // and the deck tips towards the planet (radians), so that it hangs before you and not under the floor
 const ringsNow = () => WORLDS[WORLD].kind === 5 && S.ground > 0.5;
-function goRings() { egg('rings'); sendOff(); RINGS.s = 6.3; setWorld(WORLDS.findIndex(w => w.kind === 5)); }
+function goRings() { egg('rings'); sendOff(); RINGS.p = RINGS.hi; setWorld(WORLDS.findIndex(w => w.kind === 5)); }
 function ringFrame(ms) {          // up: out of the ring plane on its sunlit side; forward: towards Saturn
   const pole = eq(40.589, 83.537), E = helio(PLANETS[5].el, centuries(ms)), sun = norm([-E[0], -E[1] * Math.cos(23.43928 * D) + E[2] * Math.sin(23.43928 * D), -E[1] * Math.sin(23.43928 * D) - E[2] * Math.cos(23.43928 * D)]);
   const north = dot(pole, sun) >= 0, up = north ? pole : pole.map(x => -x), sh = norm(add3(sun, up, -dot(sun, up))), a = 55 * D, u = add3(sh.map(x => x * Math.cos(a)), cross(up, sh), Math.sin(a)), fwd = u.map(x => -x);
   return { up, fwd, right: cross(fwd, up), north }; }
-function updateRings(dt, stickY) { if (!ringsNow()) return; if (Math.abs(stickY) > 0.15) RINGS.s = Math.min(RINGS.hi, Math.max(RINGS.lo, RINGS.s + stickY * dt * 0.9)); }      // stick forward: sink towards the ice
-const ringHeight = () => { const m = Math.pow(10, RINGS.s); return m >= 1e6 ? (m / 1e6).toFixed(1) + ' thousand km' : m >= 1000 ? Math.round(m / 100) / 10 + ' km' : Math.round(m) + ' m'; };
-const ringFacts = () => ['SATURN\'S RINGS', 'Hovering over the B ring', [['Height above the ice', ringHeight()], ['From Saturn\'s centre', '112,000 km'], ['Made of', 'water ice, from dust to house-sized'], ['Thickness', 'about 10 m, across 280,000 km'], ['Stick', 'forward: sink   ·   back: rise']],
-  'The bands and gaps are in their real places, and the Sun stands where it does for Saturn today. The single lumps of ice are generated: no camera has ever been this close.'];
+function updateRings(dt, stickY) { if (!ringsNow()) return; ringSound(); if (Math.abs(stickY) > 0.15) RINGS.p = Math.min(RINGS.hi, Math.max(RINGS.lo, RINGS.p + stickY * dt * (Math.abs(RINGS.p) < 1.2 ? 0.55 : 0.9))); }      // stick forward: down, through the ice and out the other side (slower while you are in it)
+const ringHeight = () => { const m = Math.abs(ringH()); return m >= 1e6 ? Math.round(m / 1e6).toLocaleString('en-GB') + ',000 km' : m >= 1000 ? Math.round(m / 100) / 10 + ' km' : m < 6 ? 'in among the ice' : Math.round(m) + ' m'; };
+const ringFacts = () => { const h = ringH(), in_ = Math.abs(h) < 6; return ['SATURN\'S RINGS', in_ ? 'In the rings' : h > 0 ? 'Over the sunlit face' : 'Under the dark face', [[in_ ? 'Where' : h > 0 ? 'Above the ice' : 'Below the ice', ringHeight()], ['From Saturn\'s centre', Math.round(ringRho()) + ',000 km'], ['Made of', 'water ice, from dust to house-sized'], ['Thickness', 'about 10 m, across 280,000 km'], ['Stick', 'forward: down and through   ·   back: up']],
+  h > 0 ? 'The bands and gaps are in their real places, and the Sun stands where it does for Saturn today. The single lumps of ice are generated: no camera has ever been this close.' : 'From this side the Sun is behind the rings. The dense B ring is black; the thin C ring and the Cassini Division glow, because light gets through them.']; };
+// The lumps of ice round the deck, as real shapes: one patch of the ring 150 m across, built once. Each turns slowly on its own axis; they leave the deck itself clear.
+const iceProg = program(`
+  in vec3 aOff, aCen, aNor, aCol; in vec4 aAx; uniform mat4 uPV; uniform float uY, uTime; out vec3 vN, vW, vL, vC;
+  vec3 turn(vec3 v, vec3 k, float a){ return v*cos(a) + cross(k, v)*sin(a) + k*dot(k, v)*(1.-cos(a)); }
+  void main(){ float a = aAx.w*uTime + aCen.x; vW = aCen + turn(aOff, aAx.xyz, a) + vec3(0., uY, 0.); vN = turn(aNor, aAx.xyz, a); vL = aOff + aCen*.37; vC = aCol; gl_Position = uPV*vec4(vW, 1.); }`, `
+  uniform vec3 uLight, uEye, uSat; uniform float uSun; in vec3 vN, vW, vL, vC; out vec4 o;
+  float h3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7)))*43758.5453); }
+  float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
+    return mix(mix(mix(h3(i), h3(i+vec3(1,0,0)), f.x), mix(h3(i+vec3(0,1,0)), h3(i+vec3(1,1,0)), f.x), f.y), mix(mix(h3(i+vec3(0,0,1)), h3(i+vec3(1,0,1)), f.x), mix(h3(i+vec3(0,1,1)), h3(i+vec3(1,1,1)), f.x), f.y), f.z); }
+  void main(){ vec3 n = normalize(vN), e = normalize(uEye-vW); float m = .5*vn(vL*1.7)+.3*vn(vL*5.3)+.2*vn(vL*14.), d = dot(n, uLight);
+    vec3 base = vC*(.8+.34*m); base = mix(base, vec3(.8,.9,1.), smoothstep(.55, .8, vn(vL*.8+3.))*.3);
+    vec3 col = base*max((d+.35)/1.35, 0.)*uSun;                                                           // ice lets the light a little way round its edge
+    col += base*vec3(1.,.88,.68)*.11*(.5+.5*dot(n, uSat)) + base*vec3(.5,.68,1.)*.05;                         // warm light from Saturn, cool light from the ring all round
+    col += vec3(1.)*pow(max(dot(n, normalize(uLight+e)), 0.), 60.)*(.4+m)*uSun;                               // a glint
+    col += vec3(.72,.88,1.)*pow(max(dot(-e, uLight), 0.), 3.)*pow(1.-abs(dot(n, e)), 1.6)*.95*uSun;           // and with the Sun behind it, the rim of a lump glows: light comes through the ice
+    o = vec4(col, 1.); }`);
+const iceVao = (() => { let seed = 77; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const ph = (1 + Math.sqrt(5)) / 2;      // a twenty-sided ball, each face split in four (and for the larger lumps in four again)
+  const ico = []; for (const [a, b] of [[-1, ph], [1, ph], [-1, -ph], [1, -ph]]) ico.push([a, b, 0]); for (const [a, b] of [[-1, ph], [1, ph], [-1, -ph], [1, -ph]]) ico.push([0, a, b]); for (const [a, b] of [[-1, ph], [1, ph], [-1, -ph], [1, -ph]]) ico.push([b, 0, a]);
+  const tri = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const V = ico.map(norm), T = [], mid = new Map(), m = (a, b) => { const k = a < b ? a + '_' + b : b + '_' + a; if (!mid.has(k)) { mid.set(k, V.length); V.push(norm(lerp3(V[a], V[b], 0.5))); } return mid.get(k); };
+  for (const [a, b, c] of tri) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); T.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+  const n1 = V.length, T2 = []; for (const [a, b, c] of T) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); T2.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+  const n2 = V.length, T3 = []; for (const [a, b, c] of T2) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); T3.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+  const v = [], ix = [], cs = []; let n = 0;
+  while (n < 520) { const big = rnd(), r = big > 0.985 ? 2.2 + 2.2 * rnd() : big > 0.9 ? 0.8 + 1.2 * rnd() : 0.12 + 0.5 * rnd() * rnd(), d = 3.3 + 1.5 * r + 72 * Math.sqrt(rnd()), a = rnd() * 6.2831853, y = (rnd() + rnd() + rnd() - 1.5) * 5.5;
+    const c = [Math.cos(a) * d, y, Math.sin(a) * d], sq = [0.7 + 0.5 * rnd(), 0.7 + 0.5 * rnd(), 0.7 + 0.5 * rnd()], o = [rnd() * 9, rnd() * 9, rnd() * 9], g = 0.9 + 0.1 * rnd(), b0 = v.length / 16, fine = r > 1.6 ? 2 : r > 0.45 ? 1 : 0; n++;
+    const ax = norm([rnd() - .5, rnd() - .5, rnd() - .5]), rate = (rnd() < .5 ? -1 : 1) * (0.03 + 0.16 * rnd()) / Math.sqrt(r + 0.15); cs.push([c, r]);
+    for (const q of fine === 2 ? V : fine ? V.slice(0, n2) : V.slice(0, n1)) { const k = 1 + 0.22 * Math.sin(q[0] * 3.1 + o[0]) * Math.sin(q[1] * 2.7 + o[1]) + 0.14 * Math.sin(q[2] * 5.3 + o[2]) * Math.sin(q[0] * 4.1 + o[1]), nn = norm([q[0] / sq[0], q[1] / sq[1], q[2] / sq[2]]);
+      v.push(q[0] * sq[0] * k * r, q[1] * sq[1] * k * r, q[2] * sq[2] * k * r, c[0], c[1], c[2], nn[0], nn[1], nn[2], ax[0], ax[1], ax[2], rate, g, g * 0.96, g * 0.88); }
+    for (const t of fine === 2 ? T3 : fine ? T2 : T) ix.push(b0 + t[0], b0 + t[1], b0 + t[2]); }
+  const o = vao(iceProg, new Float32Array(v), [['aOff', 3], ['aCen', 3], ['aNor', 3], ['aAx', 4], ['aCol', 3]], new Uint32Array(ix)); o.n = ix.length; o.cs = cs; return o; })();
+// and the fine stuff between them: grains too small to see, until one of them catches the Sun
+const glitProg = program(`
+  in vec4 aP; uniform mat4 uPV; uniform vec3 uEye, uLight; uniform float uY, uTime, uPx, uSun; out vec3 vCol;
+  void main(){ vec3 w = vec3(aP.x, aP.y+uY, aP.z), to = w-uEye; float dist = length(to), s = aP.w, tw = pow(max(sin(uTime*(.7+2.6*s)+s*61.), 0.), 14.), fwd = pow(max(dot(to/dist, uLight), 0.), 5.);
+    gl_Position = uPV*vec4(w, 1.); gl_PointSize = clamp(uPx*(1.6+3.5*tw)*5./max(dist, 2.), 1.5, 7.*uPx);
+    vCol = mix(vec3(.8,.9,1.), vec3(1.,.95,.85), s)*(.05 + .9*tw + .5*fwd)*uSun*smoothstep(48., 20., dist)*smoothstep(.6, 1.6, dist); }`, `
+  in vec3 vCol; out vec4 o; void main(){ vec2 p = gl_PointCoord*2.-1.; float r2 = dot(p, p); if (r2 > 1.) discard; o = vec4(vCol*exp(-r2*3.), 1.); }`);
+const GLITN = 5000, glitVao = (() => { let seed = 9; const rnd = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const d = new Float32Array(GLITN * 4); for (let i = 0; i < GLITN; i++) { const r = 1.2 + 46 * Math.sqrt(rnd()), a = rnd() * 6.2831853; d.set([Math.cos(a) * r, (rnd() + rnd() + rnd() - 1.5) * 5, Math.sin(a) * r, rnd()], i * 4); } return vao(glitProg, d, [['aP', 4]]); })();
+const ringSunlit = () => { const h = ringH(), up = S.sunL[1] * Math.cos(ringTilt()) + S.sunL[2] * Math.sin(ringTilt()); return { up, k: Math.abs(h) < 5 ? 1 : h * up > 0 ? 1 : 0.55 }; };      // (under the sheet, less of the Sun gets through to you)
+function drawIce(PVF, eye) {      // the ring plane lies ringH() metres below your eyes (or above them); the lumps and the dust hang in it
+  const h = ringH(); if (Math.abs(h) > 900) return; const y = S.head[1] - h, sun = ringSunlit().k;
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND); gl.useProgram(iceProg.p); gl.uniformMatrix4fv(iceProg.u.uPV, false, PVF); gl.uniform1f(iceProg.u.uY, y); gl.uniform1f(iceProg.u.uTime, S.time);
+  gl.uniform3fv(iceProg.u.uLight, S.sunL); gl.uniform3fv(iceProg.u.uEye, eye); gl.uniform3f(iceProg.u.uSat, 0, 0.2, -0.98); gl.uniform1f(iceProg.u.uSun, sun);
+  gl.bindVertexArray(iceVao.v); gl.drawElements(gl.TRIANGLES, iceVao.n, gl.UNSIGNED_INT, 0);
+  gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
+  if (Math.abs(h) < 70) { gl.useProgram(glitProg.p); gl.uniformMatrix4fv(glitProg.u.uPV, false, PVF); gl.uniform3fv(glitProg.u.uEye, eye); gl.uniform3fv(glitProg.u.uLight, S.sunL); gl.uniform1f(glitProg.u.uY, y); gl.uniform1f(glitProg.u.uTime, S.time);
+    gl.uniform1f(glitProg.u.uPx, S.px || 1); gl.uniform1f(glitProg.u.uSun, sun * Math.min(1, (70 - Math.abs(h)) / 30)); gl.bindVertexArray(glitVao.v); gl.drawArrays(gl.POINTS, 0, GLITN); } }
+// Saturn's larger moons, on their real orbits with their real periods. Where along its orbit each one stands is not real: that would need tables this app does not carry.
+const RMOONS = [['MIMAS', 185.5, 0.942, 40, 198], ['ENCELADUS', 238.0, 1.370, 200, 252], ['TETHYS', 294.7, 1.888, 310, 531], ['DIONE', 377.4, 2.737, 120, 561], ['RHEA', 527.1, 4.518, 250, 764], ['TITAN', 1221.9, 15.945, 15, 2575]];
+function ringMoons() {            // [name, direction in the room, how wide it looks (radians), how much of it is lit], for those not hidden behind the planet
+  const H = ringH() / 1e6, R0 = ringRho(), a = ringTilt(), c = Math.cos(a), n = Math.sin(a), d = S.sim / 86400000, sunR = [S.sunL[0], S.sunL[1] * c + S.sunL[2] * n, -S.sunL[1] * n + S.sunL[2] * c], out = [];
+  for (const [name, A, per, ph, rad] of RMOONS) { const th = ph * D + d / per * 6.2831853, m = [A * Math.cos(th), 0, A * Math.sin(th)], rel = [m[0], -H, m[2] - R0], dist = Math.hypot(rel[0], rel[1], rel[2]), u = rel.map(x => x / dist);
+    const oc = [0, -H, -R0], b = dot(oc, u), miss = dot(oc, oc) - b * b; if (b > 0 && b < dist && miss < 60.3 * 60.3) continue;                    // behind Saturn
+    const mn = norm(m), inShadow = dot(mn, sunR) < 0 && Math.hypot(...cross(m, sunR)) < 58; out.push([name, [u[0], u[1] * c - u[2] * n, u[1] * n + u[2] * c], 2 * rad / 1000 / dist, inShadow ? 0.04 : 0.5 + 0.5 * dot(u.map(x => -x), sunR)]); }
+  return out; }
+function drawRingMoons(PV, vpH) { const ms = ringMoons(); if (!ms.length) return;
+  ms.forEach(([name, dir, ang, lit], i) => rideDots.set([dir[0], dir[1], dir[2], ...(name === 'TITAN' ? [1, .78, .45] : [.95, .95, 1]).map(x => x * (0.25 + 0.75 * lit)), -Math.max(2.6, ang * 714)], i * 7));
+  gl.bindBuffer(gl.ARRAY_BUFFER, rideDotVao.b); gl.bufferSubData(gl.ARRAY_BUFFER, 0, rideDots); gl.useProgram(cloud.p); gl.uniformMatrix4fv(cloud.u.uPV, false, PV); gl.uniformMatrix3fv(cloud.u.uSky, false, IDENT3); gl.uniform1f(cloud.u.uPx, vpH / 1000);
+  gl.uniform3f(cloud.u.uRel, 0, 0, 0); gl.uniform1f(cloud.u.uUnit, 1); gl.uniform1f(cloud.u.uAmt, 1); gl.uniform1f(cloud.u.uMin, 2); gl.bindVertexArray(rideDotVao.v); gl.drawArrays(gl.POINTS, 0, ms.length); }
+// what the place sounds like (there is no sound out there: this is invented, like the other voices)
+const RSND = { pad: 0, ping: 0 };
+function ringSound() { if (!ringsNow() || !Snd.ctx) return; const h = Math.abs(ringH());
+  if (S.time > RSND.pad) { RSND.pad = S.time + 7 + Math.random() * 3; const root = [55, 61.74, 49][Math.floor(Math.random() * 3)];      // a slow, low chord from the direction of the planet
+    voxOneShot([0, 2, -30], (ctx, t, out) => { [1, 1.5, 2, 3.01].forEach((k, i) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = root * k; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05 / (1 + i), t + 4); g.gain.linearRampToValueAtTime(0, t + 11); o.connect(g); g.connect(out); o.start(t); o.stop(t + 11.2); }); }); }
+  if (h < 60 && S.time > RSND.ping) { RSND.ping = S.time + 0.35 + Math.random() * 1.8 + h * 0.03; const c = iceVao.cs[Math.floor(Math.random() * iceVao.cs.length)][0], f = [1318.5, 1568, 1760, 2093, 2637, 3136][Math.floor(Math.random() * 6)];      // and in among the ice, glassy notes from here and there
+    voxOneShot([c[0] * 0.15, S.head[1] + c[1] * 0.3, c[2] * 0.15], (ctx, t, out) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = f * (1 + (Math.random() - .5) * 0.01); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.03 * Math.min(1, (60 - h) / 40), t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.6); o.connect(g); g.connect(out); o.start(t); o.stop(t + 2.7); }); } }
 
 // marks on the globes you hold: where Apollo 11 stands on the Moon, and where you stand on the Earth
 const globePoint = (lat, lon) => [Math.cos(lon * D) * Math.cos(lat * D), Math.sin(lat * D), -Math.sin(lon * D) * Math.cos(lat * D)];
@@ -3197,7 +3282,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
   gl.useProgram(bg.p); gl.uniformMatrix4fv(bg.u.uInvPV, false, inv4(PV)); gl.uniformMatrix3fv(bg.u.uSky, false, S.sky);
   gl.uniform1f(bg.u.uGround, S.ground); gl.uniform1f(bg.u.uMWAmt, mw * mw * (1 - Math.min(1, Math.max(0, (S.away - 8000) / 30000)))); gl.uniform1f(bg.u.uTime, S.time);
   gl.uniform4f(bg.u.uBH, BH.h[0], BH.h[1], BH.h[2], BH.on ? 1 : 0); gl.uniform3fv(bg.u.uBHn, BH.n); gl.uniform1f(bg.u.uBHg, Math.min(5, Math.pow(bhGain(), 1.5))); gl.uniform1i(bg.u.uBHT, 2); gl.uniform1i(bg.u.uBHE, 3);
-  gl.uniform1f(bg.u.uWorld, WK()); gl.uniform1f(bg.u.uRingH, Math.pow(10, RINGS.s) / 1000); gl.uniform1f(bg.u.uRingN, WK() === 5 && ringFrame(S.sim).north ? 1 : -1);
+  gl.uniform1f(bg.u.uWorld, WK()); gl.uniform1f(bg.u.uRingH, (ringH() || 0.01) / 1000); gl.uniform1f(bg.u.uRingR, ringRho()); gl.uniform2f(bg.u.uRingT, Math.cos(ringTilt()), Math.sin(ringTilt())); gl.uniform1f(bg.u.uRingN, WK() === 5 && ringFrame(S.sim).north ? 1 : -1);
   gl.uniform4f(bg.u.uShad, APOLLO.at[0] - S.head[0], APOLLO.at[2] - S.head[2], S.sim < APOLLO.up ? 6.6 : 3.2, apolloNow() && S.sim >= APOLLO.land ? 1 : 0);
   if (WK() === 5) { gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, worldTex(5) || mwTex); gl.activeTexture(gl.TEXTURE0); }
   if (WORLD === 4) { const f = orbitFrame(S.sim), g = -(280.46061837 + 360.98564736629 * (S.sim / 86400000 + 2440587.5 - 2451545)) * D, cg = Math.cos(g), sg = Math.sin(g), rot = v => [v[0] * cg - v[1] * sg, v[0] * sg + v[1] * cg, v[2]];   // which way the turning Earth faces
@@ -3213,7 +3298,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
 
   gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
   gl.useProgram(stars.p); gl.uniformMatrix4fv(stars.u.uPV, false, PV); gl.uniformMatrix3fv(stars.u.uSky, false, S.sky);
-  gl.uniform1f(stars.u.uPx, vpH / 1000); gl.uniform1f(stars.u.uTime, S.time); gl.uniform1f(stars.u.uGround, S.ground); gl.uniform1f(stars.u.uAir, WORLDS[WORLD].air); gl.uniform1f(stars.u.uDip, WORLD === 4 ? -0.325 : WK() === 5 ? -0.0101 : 0); gl.uniform4f(stars.u.uOcc, Math.pow(10, RINGS.s) / 1e6, 112, 0, ringsNow() ? 1 : 0);
+  gl.uniform1f(stars.u.uPx, vpH / 1000); gl.uniform1f(stars.u.uTime, S.time); gl.uniform1f(stars.u.uGround, S.ground); gl.uniform1f(stars.u.uAir, WORLDS[WORLD].air); gl.uniform1f(stars.u.uDip, WORLD === 4 ? -0.325 : WK() === 5 ? -3 : 0); gl.uniform4f(stars.u.uOcc, (ringH() || 0.01) / 1e6, ringRho(), ringTilt(), ringsNow() ? 1 : 0);
   gl.uniform4f(stars.u.uBH, BH.h[0], BH.h[1], BH.h[2], BH.on ? 1 : 0); gl.uniform1f(stars.u.uBHg, Math.min(4, bhGain())); gl.uniform1i(stars.u.uBHI, 4);
   gl.uniform1f(stars.u.uReveal, reveal); gl.uniform1f(stars.u.uYears, S.deep); gl.uniform3fv(stars.u.uCam, S.pos); gl.uniform3fv(stars.u.uEye, eoff);
   gl.uniform1f(stars.u.uMirror, 0);
@@ -3243,6 +3328,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
     gl.bindVertexArray(cometSkyVao.v); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
   if (RIDE.on) { drawRideFar(PV, vpH); gl.useProgram(stars.p); }
   if (VOY.on) { safe('drawing the sky at Voyager', () => drawVoySky(PV, vpH)); gl.useProgram(stars.p); }
+  if (ringsNow()) { safe('drawing Saturn\'s moons', () => drawRingMoons(PV, vpH)); gl.useProgram(stars.p); }
   if (S.far > 0.003) {                               // out between the galaxies
     gl.useProgram(far.p); gl.uniformMatrix4fv(far.u.uPV, false, PV); gl.uniformMatrix3fv(far.u.uSky, false, S.sky); gl.uniform3fv(far.u.uQ, S.farQ); gl.uniform3fv(far.u.uEye, eoff);
     gl.uniform1f(far.u.uPx, vpH / 1000); gl.uniform1f(far.u.uAmt, S.far); gl.uniform1f(far.u.uLine, 0); gl.uniform3f(far.u.uTrail, 0, 0, 0);
@@ -3327,6 +3413,7 @@ function drawScene(proj, viewRot, vpH, viewFull, eye, eoff) {
       for (const [pos, q, r, c, amt] of fx) drawSunFx(PVF, eye || [0, 0, 0], pos, q, r, c, amt); } }
   if (VOY.on) safe('drawing Voyager', () => drawVoyProbe(PVF, eye || [0, 0, 0]));
   if (apolloNow()) safe('drawing Tranquility Base', () => drawApollo(PVF, eye || [0, 0, 0]));
+  if (ringsNow()) safe('drawing the ice', () => drawIce(PVF, eye || [0, 0, 0]));
   safe('drawing the laser', () => drawLaser(PVF, eye || [0, 0, 0]));
   if (LIFE.on) safe('drawing the life of a star', () => drawLife(PVF, eye || [0, 0, 0]));
   if (SAND.on) safe('drawing the sandbox', () => drawSand(PVF, eye || [0, 0, 0]));
